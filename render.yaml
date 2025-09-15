@@ -1,0 +1,17 @@
+# render.yaml
+services:
+  - type: web
+    name: west-parts-fastapi
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /docs
+    autoDeploy: true
+    envVars:
+      - key: MS_API
+        sync: false
+      - key: MS_LOGIN
+        sync: false
+      - key: MS_PASSWORD
+        sync: false
