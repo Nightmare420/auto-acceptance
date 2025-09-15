@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Импорт Excel → Приёмка (МойСклад)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50">
+  <div class="max-w-5xl mx-auto p-6 space-y-6">
+    <h1 class="text-2xl font-semibold flex items-center gap-3">
+      Импорт Excel → Приёмка (МойСклад)
+    </h1>
+
+    <div class="bg-white rounded-2xl shadow p-5 space-y-4">
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm mb-1">Файл Excel (.xlsx/.xls)</label>
+          <input id="file" type="file" accept=".xlsx,.xls" class="block w-full text-sm" />
+        </div>
+        <div class="grid grid-cols-1 gap-3">
+          <div>
+            <label class="block text-sm mb-1">Организация (name)</label>
+            <input id="org" class="w-full border rounded px-3 py-2" placeholder="например: cetok41120" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Склад (name)</label>
+            <input id="store" class="w-full border rounded px-3 py-2" placeholder="например: Основной склад" />
+          </div>
+          <div>
+            <label class="block text-sm mb-1">Контрагент (name)</label>
+            <input id="agent" class="w-full border rounded px-3 py-2" placeholder="например: Subaru" />
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input id="auto_create_products" type="checkbox" class="accent-slate-800" checked />
+            Создавать товары
+          </label>
+          <label class="inline-flex items-center gap-2 text-sm">
+            <input id="auto_create_agent" type="checkbox" class="accent-slate-800" checked />
+            Создавать контрагента
+          </label>
+        </div>
+      </div>
+
+      <div class="flex gap-3">
+            <button id="btnPreview" type="button" class="px-4 py-2 rounded bg-slate-900 text-white">Предпросмотр</button>
+            <button id="btnCreate" type="button" class="px-4 py-2 rounded bg-emerald-600 text-white">Создать приёмку</button>
+        <div id="busy" class="hidden text-sm text-slate-600 flex items-center gap-2">
+          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" stroke-width="4"/></svg>
+          Выполняется...
+        </div>
+      </div>
+    </div>
+
+    <div id="error" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm whitespace-pre-wrap"></div>
+
+    <div class="bg-white rounded-2xl shadow p-5 space-y-4">
+      <div class="flex items-center gap-3 text-sm">
+        <span id="stats" class="text-slate-600"></span>
+      </div>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <div class="font-medium mb-2">Будут созданы (Пример: первые 50)</div>
+          <table class="w-full text-sm border">
+            <thead class="bg-slate-100">
+              <tr><th class="p-2 text-left">Артикул</th><th class="p-2 text-left">Производитель</th><th class="p-2 text-left">Наименование</th></tr>
+            </thead>
+            <tbody id="tblCreate"></tbody>
+          </table>
+        </div>
+        <div>
+          <div class="font-medium mb-2">Существующие (Пример: первые 50)</div>
+          <table class="w-full text-sm border">
+            <thead class="bg-slate-100">
+              <tr><th class="p-2 text-left">Артикул</th><th class="p-2 text-left">Производитель</th><th class="p-2 text-left">ID</th></tr>
+            </thead>
+            <tbody id="tblExisting"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="resultBox" class="hidden bg-white rounded-2xl shadow p-5 space-y-3">
+      <div class="font-medium">Результат создания</div>
+      <div id="resultMeta" class="text-sm text-slate-600"></div>
+      <div id="createdProducts" class="text-sm"></div>
+      <div id="notFound" class="text-sm"></div>
+    </div>
+  </div>
+
+<script>
+
+const API_BASE = "";
+
+function qs(id){ return document.getElementById(id); }
+function setBusy(b){ const el = qs("busy"); if (el) el.classList.toggle("hidden", !b); }
+function showErr(msg){
+  const el = qs("error");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.classList.toggle("hidden", !msg);
+}
+function toParams(obj){
+  const p = new URLSearchParams();
+  for (const [k,v] of Object.entries(obj)) if (v !== undefined && v !== null && v !== "") p.set(k, String(v));
+  return p.toString();
+}
+async function call(path, query){
+  const file = qs("file")?.files?.[0];
+  if (!file) throw new Error("Выберите Excel-файл");
+  const fd = new FormData(); fd.append("file", file);
+  const url = API_BASE + path + "?" + toParams(query);
+  const resp = await fetch(url, { method: "POST", body: fd });
+  const text = await resp.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!resp.ok) throw (data?.detail || text || ("HTTP " + resp.status));
+  return data;
+}
+function getCommonQuery(){
+  return {
+    organization_name: qs("org")?.value || "",
+    store_name:        qs("store")?.value || "",
+    agent_name:        qs("agent")?.value || "",
+  };
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const btnPreview = qs("btnPreview");
+  const btnCreate  = qs("btnCreate");
+
+  if (!btnPreview || !btnCreate) {
+    console.error("Не найдены кнопки #btnPreview / #btnCreate в DOM");
+    return;
+  }
+
+  btnPreview.addEventListener("click", async () => {
+    showErr(""); setBusy(true);
+    try {
+      const q = { ...getCommonQuery(),
+        auto_create_products: qs("auto_create_products")?.checked,
+        auto_create_agent:    qs("auto_create_agent")?.checked,
+      };
+      const data = await call("/import-invoice-preview/", q);
+      qs("stats").textContent =
+        `Всего строк: ${data.rows_total} | Будет создано: ${data.will_create_count} | Обнавлен остаток у существующих: ${data.will_use_existing_count}`;
+      const mkCreate = (arr=[]) =>
+        arr.length ? arr.map(r =>
+          `<tr class="border-t"><td class="p-2">${r.article||"—"}</td><td class="p-2">${r.manufacturer||"—"}</td><td class="p-2">${r.name||"—"}</td></tr>`
+        ).join("") : `<tr><td class="p-2 text-slate-500" colspan="3">Пусто</td></tr>`;
+      const mkExist = (arr=[]) =>
+        arr.length ? arr.map(r =>
+          `<tr class="border-t"><td class="p-2">${r.article||"—"}</td><td class="p-2">${r.manufacturer||"—"}</td><td class="p-2">${r.product_id||"—"}</td></tr>`
+        ).join("") : `<tr><td class="p-2 text-slate-500" colspan="3">Пусто</td></tr>`;
+      qs("tblCreate").innerHTML   = mkCreate(data.will_create);
+      qs("tblExisting").innerHTML = mkExist(data.will_use_existing);
+      qs("resultBox")?.classList.add("hidden");
+    } catch (e) {
+      showErr(typeof e === "string" ? e : (e.message || JSON.stringify(e)));
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  btnCreate.addEventListener("click", async () => {
+    showErr(""); setBusy(true);
+    try {
+      const q = { ...getCommonQuery(),
+        name:                qs("docname")?.value || undefined,
+        moment:              qs("moment")?.value   || undefined,
+        vat_enabled:         qs("vat_enabled")?.checked,
+        vat_included:        qs("vat_included")?.checked,
+        auto_create_products: qs("auto_create_products")?.checked,
+        auto_create_agent:    qs("auto_create_agent")?.checked,
+        dry_run: false,
+      };
+      const r = await call("/import-invoice-to-supply/", q);
+      qs("resultBox")?.classList.remove("hidden");
+      qs("createdProducts").innerHTML = r.created_products?.length ? ("Создано товаров: " + r.created_products.join(", ")) : "";
+      qs("notFound").innerHTML        = r.not_found_items?.length ? ("Не сопоставлены: " + r.not_found_items.join(", ")) : "";
+    } catch (e) {
+      showErr(typeof e === "string" ? e : (e.message || JSON.stringify(e)));
+    } finally {
+      setBusy(false);
+    }
+  });
+});
+</script>
+
+</body>
+</html>
