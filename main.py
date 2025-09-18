@@ -1,5 +1,5 @@
 from __future__ import annotations
-# requirements: fastapi, uvicorn, httpx, pandas, openpyxl, numpy, pydantic, python-multipart
+# requirements: fastapi, uvicorn, httpx, pandas, openpyxl, xlrd, numpy, pydantic, python-multipart
 import os
 import base64
 import re
@@ -13,29 +13,27 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-# --- env (.env for local only; on Render use Environment vars) ---
 try:
-    from dotenv import load_dotenv  # optional
+    from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
-MS_LOGIN = os.environ.get("MS_LOGIN")
-MS_PASSWORD = os.environ.get("MS_PASSWORD")
+MS_API: str = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
+MS_LOGIN: str = os.environ.get("MS_LOGIN", "")
+MS_PASSWORD: str = os.environ.get("MS_PASSWORD", "")
 MANUFACTURER_ATTR_NAME = "Производитель"
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in prod if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Static UI & redirects ---
 BASE_DIR = Path(__file__).parent.resolve()
 app.mount("/ui", StaticFiles(directory=str(BASE_DIR / "static"), html=True), name="ui")
 
@@ -47,11 +45,9 @@ async def root_redirect():
 async def health():
     return {"ok": True}
 
-# Fail fast if secrets missing (so you see clear error in logs)
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
 
-# --- Helpers ---
 def ms_headers() -> Dict[str, str]:
     token = base64.b64encode(f"{MS_LOGIN}:{MS_PASSWORD}".encode()).decode()
     return {
@@ -59,13 +55,6 @@ def ms_headers() -> Dict[str, str]:
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip",
     }
-
-def _iter_attrs(attrs_obj):
-    if isinstance(attrs_obj, dict):
-        return list(attrs_obj.values())
-    if isinstance(attrs_obj, list):
-        return attrs_obj
-    return []
 
 def _norm_name(s: Optional[str]) -> str:
     if s is None:
@@ -81,6 +70,9 @@ def _is_unique_name_error(resp: httpx.Response) -> bool:
     except Exception:
         return False
 
+def meta_from_id(entity: str, _id: str) -> Dict[str, Any]:
+    return {"meta": {"href": f"{MS_API}/entity/{entity}/{_id}", "type": entity, "mediaType": "application/json"}}
+
 async def find_single_meta(client: httpx.AsyncClient, entity: str, filter_expr: str) -> Optional[Dict[str, Any]]:
     r = await client.get(f"{MS_API}/entity/{entity}", params={"filter": filter_expr, "limit": 1})
     r.raise_for_status()
@@ -93,14 +85,7 @@ async def search_single_meta(client: httpx.AsyncClient, entity: str, search: str
     rows = r.json().get("rows", [])
     return {"meta": rows[0]["meta"]} if rows else None
 
-def meta_from_id(entity: str, _id: str) -> Dict[str, Any]:
-    return {"meta": {"href": f"{MS_API}/entity/{entity}/{_id}", "type": entity, "mediaType": "application/json"}}
-
-# --------- KEY CHANGE: match by code (code == article_from_file) ----------
 async def find_product_by_code(client: httpx.AsyncClient, *, code: str) -> Optional[Dict[str, Any]]:
-    """
-    Сопоставление: в МойСклад ищем product, где code == артикул из файла.
-    """
     code = str(code).strip()
     if not code:
         return None
@@ -114,12 +99,9 @@ async def _fetch_product_attrs(client: httpx.AsyncClient) -> List[Dict[str, Any]
 
     r1 = await client.get(f"{MS_API}/entity/product/metadata/attributes")
     r1.raise_for_status()
-    data1 = r1.json()
-    rows = data1.get("rows")
+    rows = r1.json().get("rows")
     if isinstance(rows, list):
-        for a in rows:
-            if isinstance(a, dict):
-                out.append(a)
+        out.extend([a for a in rows if isinstance(a, dict)])
 
     r2 = await client.get(f"{MS_API}/entity/product/metadata")
     r2.raise_for_status()
@@ -142,17 +124,15 @@ async def get_or_create_manufacturer_attr_meta(client: httpx.AsyncClient, auto_c
     if not auto_create:
         raise HTTPException(400, detail=f"В товарах нет поля '{MANUFACTURER_ATTR_NAME}' (string).")
 
-    r = await client.post(
-        f"{MS_API}/entity/product/metadata/attributes",
-        json={"name": MANUFACTURER_ATTR_NAME, "type": "string"},
-    )
+    r = await client.post(f"{MS_API}/entity/product/metadata/attributes",
+                          json={"name": MANUFACTURER_ATTR_NAME, "type": "string"})
 
     if r.status_code in (409, 412) and _is_unique_name_error(r):
         attrs = await _fetch_product_attrs(client)
         for a in attrs:
             if _norm_name(a.get("name")) == target:
                 if str(a.get("type", "")).casefold() not in ("string", "text"):
-                    raise HTTPException(400, detail=f"Поле '{MANUFACTURЕР_ATTR_NAME}' существует, но тип '{a.get('type')}'. Нужен 'string'.")
+                    raise HTTPException(400, detail=f"Поле '{MANUFACTURER_ATTR_NAME}' существует, но его тип '{a.get('type')}'. Нужен 'string'.")
                 return a
         raise HTTPException(400, detail=f"Поле '{MANUFACTURЕР_ATTR_NAME}' уже существует, но API не вернуло его метаданные.")
 
@@ -185,13 +165,13 @@ async def create_product_with_article_and_manufacturer(
     client: httpx.AsyncClient, *, name: str, article: str, manufacturer: Optional[str], unit_hint: Optional[str]
 ) -> Dict[str, Any]:
     """
-    Создание товара: ПИШЕМ code = артикул из файла. Поле 'article' можно не трогать.
+    Создаём товар и пишем code = артикул из файла.
     """
     uom_meta = await resolve_uom_meta(client, unit_hint)
     payload: Dict[str, Any] = {
         "name": name or article or "Товар",
         "uom": uom_meta,
-        "code": str(article) if article else None,  # <-- ключевое изменение
+        "code": str(article) if article else None,
     }
     if payload.get("code") is None:
         payload.pop("code")
@@ -226,10 +206,6 @@ async def resolve_product_by_article_manufacturer_or_create(
     unit_hint: Optional[str],
     auto_create: bool
 ) -> Tuple[Optional[Dict[str, Any]], bool]:
-    """
-    Берём артикул из файла -> ищем product, где code == этот артикул.
-    Если не нашли и auto_create=True — создаём и ставим code.
-    """
     found = await find_product_by_code(client, code=article)
     if found:
         return found, False
@@ -301,10 +277,10 @@ async def resolve_refs(
 
     return refs, created_agent
 
-def parse_invoice_like_excel(file) -> "pd.DataFrame":
+def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataFrame":
     import pandas as pd
 
-    raw = pd.read_excel(file, sheet_name=0)
+    raw = pd.read_excel(file, sheet_name=0, engine=engine)
     header_row_idx = None
     for i, row in raw.iterrows():
         vals = row.astype(str).tolist()
@@ -358,7 +334,6 @@ def parse_invoice_like_excel(file) -> "pd.DataFrame":
     parsed = parsed[(parsed["qty"] > 0) & (parsed["article"].notna())]
     return parsed.reset_index(drop=True)
 
-# --------- API models ----------
 class SupplyCreateResponse(BaseModel):
     created_positions: int
     not_found_items: List[str]
@@ -368,7 +343,6 @@ class SupplyCreateResponse(BaseModel):
     will_use_existing: List[Dict[str, Any]] = []
     supply_meta: Dict[str, Any]
 
-# --------- Endpoints ----------
 @app.get("/ms-product-attrs")
 async def ms_product_attrs():
     async with httpx.AsyncClient(timeout=30.0, headers=ms_headers()) as client:
@@ -390,10 +364,16 @@ async def import_invoice_preview(
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
 ):
-    if not file.filename.endswith((".xlsx", ".xls")):
+    # выбор движка по расширению
+    ext = Path(file.filename).suffix.lower()
+    if ext == ".xlsx":
+        engine = "openpyxl"
+    elif ext == ".xls":
+        engine = "xlrd"
+    else:
         raise HTTPException(400, "Разрешены только .xlsx/.xls")
 
-    parsed = parse_invoice_like_excel(file.file)
+    parsed = parse_invoice_like_excel(file.file, engine=engine)
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
 
@@ -415,7 +395,7 @@ async def import_invoice_preview(
             article = str(rec["article"]).strip()
             manufacturer = rec.get("manufacturer")
             name = rec.get("name") or article
-            found = await find_product_by_code(client, code=article)  # <-- ключевой поиск
+            found = await find_product_by_code(client, code=article)
             if found:
                 product_id = found["meta"]["href"].rstrip("/").split("/")[-1]
                 will_use_existing.append({"article": article, "manufacturer": manufacturer, "name": name, "product_id": product_id})
@@ -448,14 +428,20 @@ async def import_invoice_to_supply(
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
 ):
-    if not file.filename.endswith((".xlsx", ".xls")):
+    # выбор движка по расширению
+    ext = Path(file.filename).suffix.lower()
+    if ext == ".xlsx":
+        engine = "openpyxl"
+    elif ext == ".xls":
+        engine = "xlrd"
+    else:
         raise HTTPException(400, "Разрешены только .xlsx/.xls")
 
-    parsed = parse_invoice_like_excel(file.file)
+    parsed = parse_invoice_like_excel(file.file, engine=engine)
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
 
-    import numpy as np
+    import numpy as np  # lazy import
 
     created_products: List[str] = []
     will_create: List[Dict[str, Any]] = []
@@ -486,7 +472,7 @@ async def import_invoice_to_supply(
 
             meta, created_new = await resolve_product_by_article_manufacturer_or_create(
                 client,
-                article=article,   # <-- артикул из файла
+                article=article,
                 name=name_row,
                 manufacturer=manufacturer,
                 unit_hint=unit_hint,
