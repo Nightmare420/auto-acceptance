@@ -300,10 +300,9 @@ def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataF
             html_text = data.decode("utf-8", errors="ignore")
 
         try:
-            tables = pd.read_html(StringIO(html_text))  # нужен lxml/bs4
+            tables = pd.read_html(StringIO(html_text))
             if not tables:
                 raise ValueError("HTML не содержит таблиц")
-            # берём самую «большую» таблицу
             raw = max(tables, key=lambda df: (df.shape[0] * df.shape[1]))
             return _normalize_invoice_df(raw)
         except Exception as e_html:
@@ -399,7 +398,7 @@ async def import_invoice_preview(
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
 ):
-    # выбор движка по расширению
+    
     ext = Path(file.filename).suffix.lower()
     if ext == ".xlsx":
         engine = "openpyxl"
