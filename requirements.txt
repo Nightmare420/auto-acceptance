@@ -7,3 +7,4 @@ numpy
 pydantic
 python-multipart
 xlrd>=2.0.1
+lxml

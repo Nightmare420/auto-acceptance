@@ -279,8 +279,51 @@ async def resolve_refs(
 
 def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataFrame":
     import pandas as pd
+    from io import BytesIO, StringIO
 
-    raw = pd.read_excel(file, sheet_name=0, engine=engine)
+    data = file.read()  # читаем один раз все байты; дальше используем копии
+    # 1) Пытаемся как Excel (заданный engine)
+    try:
+        raw = pd.read_excel(BytesIO(data), sheet_name=0, engine=engine)
+        return _normalize_invoice_df(raw)
+    except Exception as e_xls:
+        # 2) Если не получилось — пробуем альтернативный движок
+        alt = "openpyxl" if engine == "xlrd" else "xlrd"
+        try:
+            raw = pd.read_excel(BytesIO(data), sheet_name=0, engine=alt)
+            return _normalize_invoice_df(raw)
+        except Exception:
+            pass
+
+        # 3) Пытаемся как HTML/Excel-XML (часто так экспортируют 1С/ERP)
+        #   Подберём кодировку
+        for enc in ("utf-8", "cp1251", "windows-1251", "latin-1"):
+            try:
+                html_text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                html_text = None
+        if html_text is None:
+            html_text = data.decode("utf-8", errors="ignore")
+
+        try:
+            tables = pd.read_html(StringIO(html_text))  # нужен lxml/bs4
+            if not tables:
+                raise ValueError("HTML не содержит таблиц")
+            # берём самую «большую» таблицу
+            raw = max(tables, key=lambda df: (df.shape[0] * df.shape[1]))
+            return _normalize_invoice_df(raw)
+        except Exception as e_html:
+            raise HTTPException(
+                400,
+                detail=f"Не удалось прочитать файл Excel: исходный .xls повреждён или является HTML/Excel-XML. "
+                       f"Попробуйте сохранить файл как .xlsx. Детали: {e_xls}"
+            ) from e_html
+
+def _normalize_invoice_df(raw) -> "pd.DataFrame":
+    """Вынес твой текущий код нормализации таблицы в отдельную функцию,
+    чтобы её вызывать независимо от источника (xls/xlsx/html)."""
+    import pandas as pd
     header_row_idx = None
     for i, row in raw.iterrows():
         vals = row.astype(str).tolist()
@@ -333,6 +376,7 @@ def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataF
     parsed["price"] = pd.to_numeric(parsed["price"], errors="coerce")
     parsed = parsed[(parsed["qty"] > 0) & (parsed["article"].notna())]
     return parsed.reset_index(drop=True)
+
 
 class SupplyCreateResponse(BaseModel):
     created_positions: int
