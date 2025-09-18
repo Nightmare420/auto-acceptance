@@ -164,9 +164,6 @@ async def resolve_uom_meta(client: httpx.AsyncClient, unit_hint: Optional[str]) 
 async def create_product_with_article_and_manufacturer(
     client: httpx.AsyncClient, *, name: str, article: str, manufacturer: Optional[str], unit_hint: Optional[str]
 ) -> Dict[str, Any]:
-    """
-    Создаём товар и пишем code = артикул из файла.
-    """
     uom_meta = await resolve_uom_meta(client, unit_hint)
     payload: Dict[str, Any] = {
         "name": name or article or "Товар",
@@ -281,13 +278,11 @@ def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataF
     import pandas as pd
     from io import BytesIO, StringIO
 
-    data = file.read()  # читаем один раз все байты; дальше используем копии
-    # 1) Пытаемся как Excel (заданный engine)
+    data = file.read() 
     try:
         raw = pd.read_excel(BytesIO(data), sheet_name=0, engine=engine)
         return _normalize_invoice_df(raw)
     except Exception as e_xls:
-        # 2) Если не получилось — пробуем альтернативный движок
         alt = "openpyxl" if engine == "xlrd" else "xlrd"
         try:
             raw = pd.read_excel(BytesIO(data), sheet_name=0, engine=alt)
@@ -295,8 +290,6 @@ def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataF
         except Exception:
             pass
 
-        # 3) Пытаемся как HTML/Excel-XML (часто так экспортируют 1С/ERP)
-        #   Подберём кодировку
         for enc in ("utf-8", "cp1251", "windows-1251", "latin-1"):
             try:
                 html_text = data.decode(enc)
@@ -317,12 +310,10 @@ def parse_invoice_like_excel(file, *, engine: Optional[str] = None) -> "pd.DataF
             raise HTTPException(
                 400,
                 detail=f"Не удалось прочитать файл Excel: исходный .xls повреждён или является HTML/Excel-XML. "
-                       f"Попробуйте сохранить файл как .xlsx. Детали: {e_xls}"
+                       f"Попробуйте сохранить файл как .xlsx."
             ) from e_html
 
 def _normalize_invoice_df(raw) -> "pd.DataFrame":
-    """Вынес твой текущий код нормализации таблицы в отдельную функцию,
-    чтобы её вызывать независимо от источника (xls/xlsx/html)."""
     import pandas as pd
     header_row_idx = None
     for i, row in raw.iterrows():
