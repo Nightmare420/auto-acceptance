@@ -513,7 +513,7 @@ async def import_invoice_preview(
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
 
-    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers(), http2=True) as client:
+    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
         refs, _ = await resolve_refs(
             client,
             organization_name=organization_name, store_name=store_name, agent_name=agent_name,
@@ -604,7 +604,7 @@ async def import_invoice_to_supply(
     not_found: List[str] = []
     positions: List[Dict[str, Any]] = []
 
-    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers(), http2=True) as client:
+    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
         refs, created_agent = await resolve_refs(
             client,
             organization_name=organization_name, store_name=store_name, agent_name=agent_name,
