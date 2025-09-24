@@ -5,79 +5,161 @@
   <title>Импорт Приёмки — MoySklad</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
-    .row { display:flex; gap:14px; align-items:end; flex-wrap:wrap; margin: 8px 0 16px; }
-    label { display:block; margin-bottom: 6px; }
-    input[type="text"], input[type="number"], input[type="file"] { padding:8px; min-width: 220px; }
-    button { padding:8px 14px; cursor:pointer; }
-    .muted { color:#666; }
-    pre { background:#f7f7f9; padding:12px; border-radius:8px; overflow:auto; }
-    .badge { display:inline-block; padding:2px 6px; border-radius:6px; background:#eee; margin-left:6px; font-size:12px;}
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #2563eb;
+      --radius: 12px;
+      --space: 14px;
+      --maxw: 980px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      display:flex; justify-content:center;
+    }
+    .container {
+      width: 100%; max-width: var(--maxw); padding: 24px 16px;
+    }
+    h1, h2, h3 { margin: 0 0 14px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px;
+      box-shadow: 0 1px 2px rgba(16,24,40,0.04);
+      margin-bottom: 16px;
+    }
+    .grid {
+      display: grid; gap: var(--space);
+    }
+    /* 2 колонки на десктопе, 1 — на мобилке */
+    .grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    @media (max-width: 860px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    label { display:block; font-weight:600; margin-bottom: 6px; }
+    .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    .muted { color: var(--muted); }
+    .badge {
+      display:inline-block; padding: 2px 6px; font-size: 12px; border-radius: 8px;
+      background:#eef2ff; color:#3730a3; margin-left:6px;
+    }
+
+    input[type="text"], input[type="number"], input[type="file"] {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+      border-radius: 8px; background:#fff; outline: none;
+    }
+    input:focus { border-color:#93c5fd; box-shadow: 0 0 0 3px rgba(147,197,253,0.3); }
+
+    .radio-group { display:flex; gap: 14px; align-items:center; }
+    .actions { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    button {
+      padding:10px 14px; border-radius: 10px; border:1px solid var(--border);
+      background: #111827; color:#fff; cursor:pointer;
+    }
+    button.secondary { background:#fff; color:#111827; }
+    button:disabled { opacity: .6; cursor:not-allowed; }
+
+    pre {
+      background:#0b1220; color:#d1e0ff; border-radius: 10px; padding: 14px;
+      overflow:auto; border:1px solid #1e293b;
+      min-height: 80px;
+    }
+
+    .inline {
+      display:flex; gap: var(--space); align-items:flex-end; flex-wrap:wrap;
+    }
+    .inline > .field { min-width: 220px; flex:1; }
   </style>
 </head>
 <body>
+<div class="container">
   <h2>Импорт Приёмки в МойСклад</h2>
 
-  <div class="row">
+  <!-- Блок 1: Обязательные ссылки -->
+  <div class="card grid grid-3">
     <div>
-      <label><b>Организация</b></label>
+      <label>Организация</label>
       <input id="org" type="text" placeholder="West-parts" />
     </div>
     <div>
-      <label><b>Склад</b></label>
+      <label>Склад</label>
       <input id="store" type="text" placeholder="Основной склад" />
     </div>
     <div>
-      <label><b>Поставщик (контрагент)</b></label>
+      <label>Поставщик (контрагент)</label>
       <input id="agent" type="text" placeholder="Ebay" />
     </div>
   </div>
 
-  <div class="row">
+  <!-- Блок 2: Цена/валюта/курс -->
+  <div class="card grid grid-2">
     <div>
-      <label><b>Валюта</b></label>
-      <label><input type="radio" name="currency" value="usd" checked /> Доллар</label>
-      <label style="margin-left:10px;"><input type="radio" name="currency" value="kgs" /> Сом</label>
+      <label>Валюта</label>
+      <div class="radio-group">
+        <label><input type="radio" name="currency" value="usd" checked> Доллар</label>
+        <label><input type="radio" name="currency" value="kgs"> Сом</label>
+      </div>
+      <p class="muted" style="margin:6px 0 0;">
+        Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.
+      </p>
     </div>
-    <div id="usdWrap">
-      <label><b>Курс $</b></label>
-      <input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" />
-    </div>
-    <div>
-      <label><b>Коэффициент</b> <span class="badge">по умолч. 1.6</span></label>
-      <input id="coef" type="number" step="0.01" min="0" value="1.6" />
-    </div>
-    <div id="shipWrap">
-      <label><b>Доставка $/кг</b> <span class="badge">по умолч. 15</span></label>
-      <input id="ship" type="number" step="0.01" min="0" value="15" />
+    <div class="grid grid-2">
+      <div>
+        <label>Курс $</label>
+        <input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" />
+      </div>
+      <div>
+        <label>Коэффициент <span class="badge">по умолч. 1.6</span></label>
+        <input id="coef" type="number" step="0.01" min="0" value="1.6" />
+      </div>
+      <div>
+        <label>Доставка $/кг <span class="badge">по умолч. 15</span></label>
+        <input id="ship" type="number" step="0.01" min="0" value="15" />
+      </div>
+      <div>
+        <label>Заказ поставщику (опц.)</label>
+        <input id="poid" type="text" placeholder="UUID ЗП для привязки" />
+      </div>
     </div>
   </div>
 
-  <div class="row">
-    <div>
-      <label><b>Файл (.xlsx или .csv)</b></label>
-      <input id="file" type="file" />
-      <div class="muted">Формат .xls ненадёжный — лучше сохранить в .xlsx</div>
-    </div>
-    <div>
-      <label><b>Заказ поставщику (опц.)</b> <span class="badge">привязка</span></label>
-      <input id="poid" type="text" placeholder="UUID ЗП (если нужно)" />
+  <!-- Блок 3: Файл + действия -->
+  <div class="card">
+    <div class="inline">
+      <div class="field">
+        <label>Файл поставщика</label>
+        <input id="file" type="file" />
+        <div class="muted" style="margin-top:6px;">
+          Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.
+        </div>
+      </div>
+      <div class="actions">
+        <button id="previewBtn" type="button" class="secondary">Превью</button>
+        <button id="importBtn" type="button">Создать Приёмку</button>
+        <span id="hint" class="muted"></span>
+      </div>
     </div>
   </div>
 
-  <div class="row">
-    <button id="previewBtn" type="button">Превью</button>
-    <button id="importBtn" type="button">Создать Приёмку</button>
-    <span id="hint" class="muted"></span>
+  <!-- Ответ -->
+  <div class="card">
+    <h3>Ответ</h3>
+    <pre id="out">—</pre>
   </div>
-
-  <h3>Ответ</h3>
-  <pre id="out">—</pre>
+</div>
 
 <script>
   const curRadios = document.querySelectorAll('input[name="currency"]');
-  const usdWrap = document.getElementById('usdWrap');
-  const shipWrap = document.getElementById('shipWrap');
+  const usdRateEl = document.getElementById('usdRate');
+  const coefEl = document.getElementById('coef');
+  const shipEl = document.getElementById('ship');
 
   function getCur() {
     for (const r of curRadios) if (r.checked) return r.value;
@@ -85,8 +167,8 @@
   }
   function toggleUsd() {
     const isUsd = getCur() === 'usd';
-    usdWrap.style.display = isUsd ? '' : 'none';
-    shipWrap.style.display = isUsd ? '' : 'none';
+    usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
+    shipEl.closest('div').style.display = isUsd ? '' : 'none';
   }
   curRadios.forEach(r => r.addEventListener('change', toggleUsd));
   toggleUsd();
@@ -104,17 +186,19 @@
 
     const currency = getCur();
     q.set('price_currency', currency);
+
     if (withPriceParams) {
-      const coef = parseFloat(document.getElementById('coef').value || '1.6');
+      const coef = parseFloat(coefEl.value || '1.6');
       q.set('coef', String(coef));
       if (currency === 'usd') {
-        const rate = parseFloat(document.getElementById('usdRate').value);
+        const rate = parseFloat(usdRateEl.value);
         if (!rate) throw new Error('Укажите курс доллара');
         q.set('usd_rate', String(rate));
-        const ship = parseFloat(document.getElementById('ship').value || '15');
+        const ship = parseFloat(shipEl.value || '15');
         q.set('shipping_per_kg_usd', String(ship));
       }
     }
+
     const poid = document.getElementById('poid').value.trim();
     if (poid) q.set('purchase_order_id', poid);
 
@@ -144,11 +228,9 @@
     const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
     let data;
     try { data = await resp.json(); } catch { data = { error: await resp.text() }; }
-    if (!resp.ok) {
-      out.textContent = JSON.stringify(data, null, 2);
-      return;
-    }
     out.textContent = JSON.stringify(data, null, 2);
+
+    if (!resp.ok) return;
     if (path.includes('import-invoice-to-supply')) {
       hint.textContent = 'Готово. Документ Приёмки создан.';
     }
