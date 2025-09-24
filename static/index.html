@@ -2,194 +2,160 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
+  <title>Импорт Приёмки — MoySklad</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Импорт Excel → Приёмка (МойСклад)</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
+    .row { display:flex; gap:14px; align-items:end; flex-wrap:wrap; margin: 8px 0 16px; }
+    label { display:block; margin-bottom: 6px; }
+    input[type="text"], input[type="number"], input[type="file"] { padding:8px; min-width: 220px; }
+    button { padding:8px 14px; cursor:pointer; }
+    .muted { color:#666; }
+    pre { background:#f7f7f9; padding:12px; border-radius:8px; overflow:auto; }
+    .badge { display:inline-block; padding:2px 6px; border-radius:6px; background:#eee; margin-left:6px; font-size:12px;}
+  </style>
 </head>
-<body class="bg-slate-50">
-  <div class="max-w-5xl mx-auto p-6 space-y-6">
-    <h1 class="text-2xl font-semibold flex items-center gap-3">
-      Импорт Excel → Приёмка (МойСклад)
-    </h1>
+<body>
+  <h2>Импорт Приёмки в МойСклад</h2>
 
-    <div class="bg-white rounded-2xl shadow p-5 space-y-4">
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm mb-1">Файл Excel (.xlsx)</label>
-          <input id="file" type="file" accept=".xlsx,.xls" class="block w-full text-sm" />
-        </div>
-        <div class="grid grid-cols-1 gap-3">
-          <div>
-            <label class="block text-sm mb-1">Организация (name)</label>
-            <input id="org" class="w-full border rounded px-3 py-2" placeholder="например: cetok41120" />
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Склад (name)</label>
-            <input id="store" class="w-full border rounded px-3 py-2" placeholder="например: Основной склад" />
-          </div>
-          <div>
-            <label class="block text-sm mb-1">Контрагент (name)</label>
-            <input id="agent" class="w-full border rounded px-3 py-2" placeholder="например: Subaru" />
-          </div>
-        </div>
-      </div>
-
-      <div class="grid md:grid-cols-3 gap-4">
-        <div class="grid grid-cols-2 gap-3">
-          <label class="inline-flex items-center gap-2 text-sm">
-            <input id="auto_create_products" type="checkbox" class="accent-slate-800" checked />
-            Создавать товары
-          </label>
-          <label class="inline-flex items-center gap-2 text-sm">
-            <input id="auto_create_agent" type="checkbox" class="accent-slate-800" checked />
-            Создавать контрагента
-          </label>
-        </div>
-      </div>
-
-      <div class="flex gap-3">
-            <button id="btnPreview" type="button" class="px-4 py-2 rounded bg-slate-900 text-white">Предпросмотр</button>
-            <button id="btnCreate" type="button" class="px-4 py-2 rounded bg-emerald-600 text-white">Создать приёмку</button>
-        <div id="busy" class="hidden text-sm text-slate-600 flex items-center gap-2">
-          <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" stroke-width="4"/></svg>
-          Выполняется...
-        </div>
-      </div>
+  <div class="row">
+    <div>
+      <label><b>Организация</b></label>
+      <input id="org" type="text" placeholder="West-parts" />
     </div>
-
-    <div id="error" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm whitespace-pre-wrap"></div>
-
-    <div class="bg-white rounded-2xl shadow p-5 space-y-4">
-      <div class="flex items-center gap-3 text-sm">
-        <span id="stats" class="text-slate-600"></span>
-      </div>
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <div class="font-medium mb-2">Будут созданы (Пример: первые 50)</div>
-          <table class="w-full text-sm border">
-            <thead class="bg-slate-100">
-              <tr><th class="p-2 text-left">Артикул</th><th class="p-2 text-left">Производитель</th><th class="p-2 text-left">Наименование</th></tr>
-            </thead>
-            <tbody id="tblCreate"></tbody>
-          </table>
-        </div>
-        <div>
-          <div class="font-medium mb-2">Существующие (Пример: первые 50)</div>
-          <table class="w-full text-sm border">
-            <thead class="bg-slate-100">
-              <tr><th class="p-2 text-left">Артикул</th><th class="p-2 text-left">Производитель</th><th class="p-2 text-left">ID</th></tr>
-            </thead>
-            <tbody id="tblExisting"></tbody>
-          </table>
-        </div>
-      </div>
+    <div>
+      <label><b>Склад</b></label>
+      <input id="store" type="text" placeholder="Основной склад" />
     </div>
-
-    <div id="resultBox" class="hidden bg-white rounded-2xl shadow p-5 space-y-3">
-      <div class="font-medium">Результат создания</div>
-      <div id="resultMeta" class="text-sm text-slate-600"></div>
-      <div id="createdProducts" class="text-sm"></div>
-      <div id="notFound" class="text-sm"></div>
+    <div>
+      <label><b>Поставщик (контрагент)</b></label>
+      <input id="agent" type="text" placeholder="Ebay" />
     </div>
   </div>
 
+  <div class="row">
+    <div>
+      <label><b>Валюта</b></label>
+      <label><input type="radio" name="currency" value="usd" checked /> Доллар</label>
+      <label style="margin-left:10px;"><input type="radio" name="currency" value="kgs" /> Сом</label>
+    </div>
+    <div id="usdWrap">
+      <label><b>Курс $</b></label>
+      <input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" />
+    </div>
+    <div>
+      <label><b>Коэффициент</b> <span class="badge">по умолч. 1.6</span></label>
+      <input id="coef" type="number" step="0.01" min="0" value="1.6" />
+    </div>
+    <div id="shipWrap">
+      <label><b>Доставка $/кг</b> <span class="badge">по умолч. 15</span></label>
+      <input id="ship" type="number" step="0.01" min="0" value="15" />
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label><b>Файл (.xlsx или .csv)</b></label>
+      <input id="file" type="file" />
+      <div class="muted">Формат .xls ненадёжный — лучше сохранить в .xlsx</div>
+    </div>
+    <div>
+      <label><b>Заказ поставщику (опц.)</b> <span class="badge">привязка</span></label>
+      <input id="poid" type="text" placeholder="UUID ЗП (если нужно)" />
+    </div>
+  </div>
+
+  <div class="row">
+    <button id="previewBtn" type="button">Превью</button>
+    <button id="importBtn" type="button">Создать Приёмку</button>
+    <span id="hint" class="muted"></span>
+  </div>
+
+  <h3>Ответ</h3>
+  <pre id="out">—</pre>
+
 <script>
+  const curRadios = document.querySelectorAll('input[name="currency"]');
+  const usdWrap = document.getElementById('usdWrap');
+  const shipWrap = document.getElementById('shipWrap');
 
-const API_BASE = "";
+  function getCur() {
+    for (const r of curRadios) if (r.checked) return r.value;
+    return 'kgs';
+  }
+  function toggleUsd() {
+    const isUsd = getCur() === 'usd';
+    usdWrap.style.display = isUsd ? '' : 'none';
+    shipWrap.style.display = isUsd ? '' : 'none';
+  }
+  curRadios.forEach(r => r.addEventListener('change', toggleUsd));
+  toggleUsd();
 
-function qs(id){ return document.getElementById(id); }
-function setBusy(b){ const el = qs("busy"); if (el) el.classList.toggle("hidden", !b); }
-function showErr(msg){
-  const el = qs("error");
-  if (!el) return;
-  el.textContent = msg || "";
-  el.classList.toggle("hidden", !msg);
-}
-function toParams(obj){
-  const p = new URLSearchParams();
-  for (const [k,v] of Object.entries(obj)) if (v !== undefined && v !== null && v !== "") p.set(k, String(v));
-  return p.toString();
-}
-async function call(path, query){
-  const file = qs("file")?.files?.[0];
-  if (!file) throw new Error("Выберите Excel-файл");
-  const fd = new FormData(); fd.append("file", file);
-  const url = API_BASE + path + "?" + toParams(query);
-  const resp = await fetch(url, { method: "POST", body: fd });
-  const text = await resp.text();
-  let data = null; try { data = text ? JSON.parse(text) : null; } catch {}
-  if (!resp.ok) throw (data?.detail || text || ("HTTP " + resp.status));
-  return data;
-}
-function getCommonQuery(){
-  return {
-    organization_name: qs("org")?.value || "",
-    store_name:        qs("store")?.value || "",
-    agent_name:        qs("agent")?.value || "",
-  };
-}
+  function buildQuery({withPriceParams}) {
+    const q = new URLSearchParams();
+    const org = document.getElementById('org').value.trim();
+    const store = document.getElementById('store').value.trim();
+    const agent = document.getElementById('agent').value.trim();
+    if (org) q.set('organization_name', org);
+    if (store) q.set('store_name', store);
+    if (agent) q.set('agent_name', agent);
+    q.set('auto_create_products', 'true');
+    q.set('auto_create_agent', 'true');
 
-document.addEventListener("DOMContentLoaded", () => {
-  const btnPreview = qs("btnPreview");
-  const btnCreate  = qs("btnCreate");
+    const currency = getCur();
+    q.set('price_currency', currency);
+    if (withPriceParams) {
+      const coef = parseFloat(document.getElementById('coef').value || '1.6');
+      q.set('coef', String(coef));
+      if (currency === 'usd') {
+        const rate = parseFloat(document.getElementById('usdRate').value);
+        if (!rate) throw new Error('Укажите курс доллара');
+        q.set('usd_rate', String(rate));
+        const ship = parseFloat(document.getElementById('ship').value || '15');
+        q.set('shipping_per_kg_usd', String(ship));
+      }
+    }
+    const poid = document.getElementById('poid').value.trim();
+    if (poid) q.set('purchase_order_id', poid);
 
-  if (!btnPreview || !btnCreate) {
-    console.error("Не найдены кнопки #btnPreview / #btnCreate в DOM");
-    return;
+    return q;
   }
 
-  btnPreview.addEventListener("click", async () => {
-    showErr(""); setBusy(true);
-    try {
-      const q = { ...getCommonQuery(),
-        auto_create_products: qs("auto_create_products")?.checked,
-        auto_create_agent:    qs("auto_create_agent")?.checked,
-      };
-      const data = await call("/import-invoice-preview/", q);
-      qs("stats").textContent =
-        `Всего строк: ${data.rows_total} | Будет создано: ${data.will_create_count} | Обнавлен остаток у существующих: ${data.will_use_existing_count}`;
-      const mkCreate = (arr=[]) =>
-        arr.length ? arr.map(r =>
-          `<tr class="border-t"><td class="p-2">${r.article||"—"}</td><td class="p-2">${r.manufacturer||"—"}</td><td class="p-2">${r.name||"—"}</td></tr>`
-        ).join("") : `<tr><td class="p-2 text-slate-500" colspan="3">Пусто</td></tr>`;
-      const mkExist = (arr=[]) =>
-        arr.length ? arr.map(r =>
-          `<tr class="border-t"><td class="p-2">${r.article||"—"}</td><td class="p-2">${r.manufacturer||"—"}</td><td class="p-2">${r.product_id||"—"}</td></tr>`
-        ).join("") : `<tr><td class="p-2 text-slate-500" colspan="3">Пусто</td></tr>`;
-      qs("tblCreate").innerHTML   = mkCreate(data.will_create);
-      qs("tblExisting").innerHTML = mkExist(data.will_use_existing);
-      qs("resultBox")?.classList.add("hidden");
-    } catch (e) {
-      showErr(typeof e === "string" ? e : (e.message || JSON.stringify(e)));
-    } finally {
-      setBusy(false);
-    }
-  });
+  async function callApi(path, withPriceParams) {
+    const out = document.getElementById('out');
+    const hint = document.getElementById('hint');
+    out.textContent = 'Загрузка...';
+    hint.textContent = '';
 
-  btnCreate.addEventListener("click", async () => {
-    showErr(""); setBusy(true);
+    const f = document.getElementById('file').files[0];
+    if (!f) { out.textContent = 'Выберите файл.'; return; }
+
+    let q;
     try {
-      const q = { ...getCommonQuery(),
-        name:                qs("docname")?.value || undefined,
-        moment:              qs("moment")?.value   || undefined,
-        vat_enabled:         qs("vat_enabled")?.checked,
-        vat_included:        qs("vat_included")?.checked,
-        auto_create_products: qs("auto_create_products")?.checked,
-        auto_create_agent:    qs("auto_create_agent")?.checked,
-        dry_run: false,
-      };
-      const r = await call("/import-invoice-to-supply/", q);
-      qs("resultBox")?.classList.remove("hidden");
-      qs("createdProducts").innerHTML = r.created_products?.length ? ("Создано товаров: " + r.created_products.join(", ")) : "";
-      qs("notFound").innerHTML        = r.not_found_items?.length ? ("Не сопоставлены: " + r.not_found_items.join(", ")) : "";
+      q = buildQuery({withPriceParams});
     } catch (e) {
-      showErr(typeof e === "string" ? e : (e.message || JSON.stringify(e)));
-    } finally {
-      setBusy(false);
+      out.textContent = e.message || String(e);
+      return;
     }
-  });
-});
+
+    const form = new FormData();
+    form.append('file', f);
+
+    const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
+    let data;
+    try { data = await resp.json(); } catch { data = { error: await resp.text() }; }
+    if (!resp.ok) {
+      out.textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    out.textContent = JSON.stringify(data, null, 2);
+    if (path.includes('import-invoice-to-supply')) {
+      hint.textContent = 'Готово. Документ Приёмки создан.';
+    }
+  }
+
+  document.getElementById('previewBtn').addEventListener('click', () => callApi('/import-invoice-preview/', true));
+  document.getElementById('importBtn').addEventListener('click', () => callApi('/import-invoice-to-supply/', true));
 </script>
-
 </body>
 </html>
