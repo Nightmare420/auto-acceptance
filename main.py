@@ -5,7 +5,8 @@ import re
 import base64
 import asyncio
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Set, DefaultDict
+from collections import defaultdict
 
 import httpx
 import numpy as np
@@ -137,9 +138,9 @@ async def get_or_create_manufacturer_attr_meta(client: httpx.AsyncClient, auto_c
         for a in attrs:
             if _norm_name(a.get("name")) == target:
                 if str(a.get("type", "")).casefold() not in ("string", "text"):
-                    raise HTTPException(400, detail=f"Поле '{MANUFACTURER_ATTR_NAME}' существует, но его тип '{a.get('type')}'. Нужен тип 'string'.")
+                    raise HTTPException(400, detail=f"Поле '{MANUFACTURЕР_ATTR_NAME}' существует, но его тип '{a.get('type')}'. Нужен тип 'string'.")
                 return a
-        raise HTTPException(400, detail=f"Поле '{MANUFACTURЕР_ATTR_NAME}' уже существует, но API не вернуло его метаданные.")
+        raise HTTPException(400, detail=f"Поле '{MANUFACTURER_ATTR_NAME}' уже существует, но API не вернуло его метаданные.")
 
     r.raise_for_status()
     return r.json()
@@ -284,19 +285,16 @@ def _read_xlsx_xls(file, engine: Optional[str]) -> pd.DataFrame:
     return pd.read_excel(file, sheet_name=0, engine=engine)
 
 def _read_csv(file) -> pd.DataFrame:
-    # пробуем несколько кодировок
     raw = file.read()
     for enc in ("utf-8-sig", "cp1251", "utf-8"):
         try:
             return pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine="python")
         except Exception:
             continue
-    # fallback
     return pd.read_csv(io.BytesIO(raw))
 
 def parse_invoice_like_table(df: pd.DataFrame) -> pd.DataFrame:
     raw = df
-    # ищем строку заголовков
     header_row_idx = None
     for i, row in raw.iterrows():
         vals = row.astype(str).tolist()
@@ -304,25 +302,23 @@ def parse_invoice_like_table(df: pd.DataFrame) -> pd.DataFrame:
             header_row_idx = i
             break
     if header_row_idx is None:
-        # если не нашли — предполагаем, что первая строка уже заголовки
         header_row_idx = 0
 
     header_row = raw.iloc[header_row_idx]
     name2col = {str(v).strip(): c for c, v in header_row.items() if pd.notna(v)}
 
     col_mnf   = name2col.get("Производитель") or name2col.get("Производ.") or name2col.get("Производ") or name2col.get("Бренд")
-    col_code  = name2col.get("Артикул")  # в файле — это артикул, мы его будем сравнивать с code в МС
+    col_code  = name2col.get("Артикул")
     col_name  = name2col.get("Товары (работы, услуги)") or name2col.get("Наименование") or name2col.get("Название")
     col_qty   = name2col.get("Кол.") or name2col.get("Кол-во") or name2col.get("Колич.") or name2col.get("Количество")
     col_unit  = name2col.get("Ед.") or name2col.get("Ед") or name2col.get("Единица")
     col_price = name2col.get("Цена")
     col_sum   = name2col.get("Сумма")
-    col_curr  = name2col.get("Валюта")  # если есть — приоритетнее переключателя
+    col_curr  = name2col.get("Валюта")
     col_w     = name2col.get("Вес") or name2col.get("Вес, кг") or name2col.get("Масса")
 
     data = raw.iloc[header_row_idx + 1:].copy()
 
-    # отрезаем "ИТОГО" и пустые
     stop_idx = None
     for i, row in data.iterrows():
         name_v = row[col_name] if col_name in data.columns else None
@@ -339,7 +335,7 @@ def parse_invoice_like_table(df: pd.DataFrame) -> pd.DataFrame:
 
     parsed = pd.DataFrame({
         "manufacturer": data[col_mnf] if col_mnf in data.columns else None,
-        "article": data[col_code] if col_code in data.columns else None,   # <- из файла
+        "article": data[col_code] if col_code in data.columns else None,
         "name": data[col_name] if col_name in data.columns else None,
         "qty": data[col_qty] if col_qty in data.columns else 1,
         "unit": data[col_unit] if col_unit in data.columns else None,
@@ -390,12 +386,6 @@ async def prefetch_products_by_code(
 
 # ---------- Расчёт цены ----------
 def compute_price_kgs(row: Dict[str, Any], *, default_currency: str, coef: float, usd_rate: Optional[float], shipping_per_kg_usd: Optional[float]) -> Optional[float]:
-    """
-    Правила:
-    - Если валюта USD: итог = (price * coef) + (weight * shippingUSD); затем * usd_rate
-    - Если валюта KGS: итог = price * coef
-    Возвращаем сумму в СОМах (float) или None, если нет цены.
-    """
     price = row.get("price")
     if price is None or (isinstance(price, float) and np.isnan(price)):
         return None
@@ -414,6 +404,96 @@ def compute_price_kgs(row: Dict[str, Any], *, default_currency: str, coef: float
         return float(base_usd) * float(usd_rate)
     else:
         return float(price) * float(coef)
+
+# ---------- Покупка: коды из Заказов Поставщику ----------
+async def fetch_purchase_order_codes(client: httpx.AsyncClient, po_id: str) -> Tuple[Set[str], Dict[str, Any]]:
+    """
+    Возвращает множество product.code из указанного ЗП и базовую мету ЗП.
+    Сначала пытаемся expand=positions.assortment, если кода нет — идём по позициям отдельно.
+    """
+    codes: Set[str] = set()
+    r = await _request_with_backoff(
+        client, "GET", f"{MS_API}/entity/purchaseorder/{po_id}",
+        params={"expand": "positions.assortment"}
+    )
+    r.raise_for_status()
+    data = r.json()
+    po_meta = data.get("meta") or {}
+    # пробуем вытащить из расширенных позиций
+    pos_rows = (data.get("positions") or {}).get("rows") or []
+    for pos in pos_rows:
+        assort = pos.get("assortment") or {}
+        code = (assort.get("code") or "").strip()
+        if code:
+            codes.add(code)
+
+    if codes:
+        return codes, po_meta
+
+    # fallback: отдельно запросить позиции и расширить ассортимент
+    r2 = await _request_with_backoff(
+        client, "GET", f"{MS_API}/entity/purchaseorder/{po_id}/positions",
+        params={"expand": "assortment", "limit": 1000}
+    )
+    r2.raise_for_status()
+    for pos in r2.json().get("rows", []):
+        assort = pos.get("assortment") or {}
+        code = (assort.get("code") or "").strip()
+        if code:
+            codes.add(code)
+    return codes, po_meta
+
+async def fetch_purchase_orders_for_agent(client: httpx.AsyncClient, agent_meta_href: str, limit: int = 20) -> List[Dict[str, Any]]:
+    """
+    Возвращает список ЗП (минимум полей) для данного контрагента, последние по дате.
+    """
+    r = await _request_with_backoff(
+        client, "GET", f"{MS_API}/entity/purchaseorder",
+        params={"filter": f"agent={agent_meta_href}", "order": "moment,desc", "limit": limit}
+    )
+    r.raise_for_status()
+    return r.json().get("rows", []) or []
+
+async def build_po_code_index_by_agent(
+    client: httpx.AsyncClient, *, agent_name: Optional[str], agent_id: Optional[str], limit: int = 20
+) -> Tuple[DefaultDict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """
+    Возвращает:
+      - индекс: code -> список {po_id, po_name}
+      - список использованных ЗП (для справки в UI)
+    """
+    # найдём мету контрагента (без автосоздания)
+    agent_meta = None
+    if agent_id:
+        agent_meta = meta_from_id("counterparty", agent_id)
+    elif agent_name:
+        agent_meta = await find_single_meta(client, "counterparty", f"name={agent_name}") \
+                     or await search_single_meta(client, "counterparty", agent_name)
+    if not agent_meta:
+        return defaultdict(list), []
+
+    agent_href = (agent_meta.get("meta") or {}).get("href")
+    if not agent_href:
+        return defaultdict(list), []
+
+    pos = await fetch_purchase_orders_for_agent(client, agent_href, limit=limit)
+    index: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
+    used_po_list: List[Dict[str, Any]] = []
+
+    # аккуратно, без лишнего параллелизма
+    for po in pos:
+        po_meta = po.get("meta") or {}
+        po_id = po_meta.get("href", "").rstrip("/").split("/")[-1]
+        po_name = po.get("name") or po_id
+        if not po_id:
+            continue
+        codes, _meta = await fetch_purchase_order_codes(client, po_id)
+        if codes:
+            used_po_list.append({"id": po_id, "name": po_name})
+        for c in codes:
+            index[c].append({"po_id": po_id, "po_name": po_name})
+        await asyncio.sleep(0.05)  # чуть «растянуть» запросы
+    return index, used_po_list
 
 # ---------- Схемы ответов ----------
 class SupplyCreateResponse(BaseModel):
@@ -450,37 +530,57 @@ async def import_invoice_preview(
     shipping_per_kg_usd: float = 15.0,
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
+    # Новые параметры сопоставления с ЗП:
+    purchase_order_id: Optional[str] = None,
+    po_scan_limit: int = 20,   # сколько последних ЗП поставщика смотреть, если ID не задан
 ):
     df_raw, _ = parse_upload_to_df(file)
     parsed = parse_invoice_like_table(df_raw)
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
 
+    # Коды по ЗП: либо конкретный ЗП, либо индекс по поставщику
+    po_codes_index: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
+    used_pos: List[Dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=75.0, headers=ms_headers()) as client:
+        if purchase_order_id:
+            codes, _po_meta = await fetch_purchase_order_codes(client, purchase_order_id)
+            for c in codes:
+                po_codes_index[c].append({"po_id": purchase_order_id, "po_name": purchase_order_id})
+            used_pos = [{"id": purchase_order_id, "name": purchase_order_id}]
+        elif agent_name or agent_id:
+            po_codes_index, used_pos = await build_po_code_index_by_agent(
+                client, agent_name=agent_name, agent_id=agent_id, limit=max(1, min(po_scan_limit, 100))
+            )
+
+    # Обычное сопоставление с товарами (по code)
     codes = [str(r["article"]) for r in parsed.to_dict(orient="records")]
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        # в превью только префетчим и смотрим что найдётся
         cache = await prefetch_products_by_code(client, codes, max_concurrency=3)
 
     will_create, will_use_existing = [], []
     calc_prices = []
+    matches_by_article: DefaultDict[str, List[Dict[str, Any]]] = defaultdict(list)
 
     for rec in parsed.to_dict(orient="records"):
-        article = str(rec["article"])
+        article = str(rec["article"]).strip()
         name = rec.get("name") or article
         manufacturer = rec.get("manufacturer")
 
+        # Матч с товарами
         if article in cache:
             product_id = cache[article]["meta"]["href"].rstrip("/").split("/")[-1]
             will_use_existing.append({"article": article, "manufacturer": manufacturer, "name": name, "product_id": product_id})
         else:
             will_create.append({"article": article, "manufacturer": manufacturer, "name": name})
 
+        # Матч с заказами поставщику (по code)
+        if article in po_codes_index:
+            matches_by_article[article] = po_codes_index[article]
+
+        # Расчёт цены
         price_kgs = compute_price_kgs(
-            rec,
-            default_currency=price_currency,
-            coef=coef,
-            usd_rate=usd_rate,
-            shipping_per_kg_usd=shipping_per_kg_usd,
+            rec, default_currency=price_currency, coef=coef, usd_rate=usd_rate, shipping_per_kg_usd=shipping_per_kg_usd
         )
         if price_kgs is not None:
             calc_prices.append({"article": article, "price_kgs": round(float(price_kgs), 2)})
@@ -492,7 +592,10 @@ async def import_invoice_preview(
         "will_create": will_create[:200],
         "will_use_existing": will_use_existing[:200],
         "calculated_prices": calc_prices[:500],
-        "note": "Артикул из файла сравнивается с 'code' в МойСклад. Цены пересчитаны в сомах по заданным правилам.",
+        # Новое:
+        "matches_by_article": matches_by_article,
+        "purchase_orders_used": used_pos,
+        "note": "Артикул из файла сравнивается с product.code в товарах и в заказах поставщику.",
     }
 
 @app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
@@ -515,6 +618,8 @@ async def import_invoice_to_supply(
     shipping_per_kg_usd: float = 15.0,
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
+    # можно тоже добавить сверку с ЗП, если нужно (по умолчанию не критично для создания)
+    purchase_order_id: Optional[str] = None,
 ):
     df_raw, _ = parse_upload_to_df(file)
     parsed = parse_invoice_like_table(df_raw)
@@ -536,12 +641,12 @@ async def import_invoice_to_supply(
         )
         _ = await get_or_create_manufacturer_attr_meta(client, auto_create=True)
 
-        # префетч, чтобы меньше долбить API
+        # префетч товаров
         codes = [str(r["article"]) for r in parsed.to_dict(orient="records")]
         cache = await prefetch_products_by_code(client, codes, max_concurrency=3)
 
         for rec in parsed.to_dict(orient="records"):
-            code = str(rec["article"])
+            code = str(rec["article"]).strip()
             name_row = rec.get("name") or code
             manufacturer = rec.get("manufacturer")
             unit_hint = rec.get("unit")
@@ -567,11 +672,7 @@ async def import_invoice_to_supply(
 
             # цена в сомах по правилам
             price_kgs = compute_price_kgs(
-                rec,
-                default_currency=price_currency,
-                coef=coef,
-                usd_rate=usd_rate,
-                shipping_per_kg_usd=shipping_per_kg_usd,
+                rec, default_currency=price_currency, coef=coef, usd_rate=usd_rate, shipping_per_kg_usd=shipping_per_kg_usd
             )
 
             pos = {"assortment": meta, "quantity": qty}
