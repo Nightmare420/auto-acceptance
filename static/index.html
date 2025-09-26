@@ -5,35 +5,88 @@
   <title>Импорт Приёмки — MoySklad</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --radius:12px; --space:14px; --maxw:980px; }
-    *{box-sizing:border-box} html,body{height:100%}
-    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
-    .container{width:100%;max-width:var(--maxw);padding:24px 16px}
-    h1,h2,h3{margin:0 0 14px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);margin-bottom:16px}
-    .grid{display:grid;gap:var(--space)} .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))} .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-    @media (max-width:860px){.grid-2,.grid-3{grid-template-columns:1fr}}
-    label{display:block;font-weight:600;margin-bottom:6px}
-    .muted{color:var(--muted)}
-    .badge{display:inline-block;padding:2px 6px;font-size:12px;border-radius:8px;background:#eef2ff;color:#3730a3;margin-left:6px}
-    input[type="text"],input[type="number"],input[type="file"]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;outline:none}
-    input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.3)}
-    .radio-group{display:flex;gap:14px;align-items:center}
-    .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer}
-    button.secondary{background:#fff;color:#111827}
-    pre{background:#0b1220;color:#d1e0ff;border-radius:10px;padding:14px;overflow:auto;border:1px solid #1e293b;min-height:80px}
-    .inline{display:flex;gap:var(--space);align-items:flex-end;flex-wrap:wrap}.inline>.field{min-width:220px;flex:1}
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #2563eb;
+      --radius: 12px;
+      --space: 14px;
+      --maxw: 980px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      display:flex; justify-content:center;
+    }
+    .container { width: 100%; max-width: var(--maxw); padding: 24px 16px; }
+    h1, h2, h3 { margin: 0 0 14px; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px;
+      box-shadow: 0 1px 2px rgba(16,24,40,0.04);
+      margin-bottom: 16px;
+    }
+    .grid { display: grid; gap: var(--space); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+    @media (max-width: 860px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
 
-    /* красивый вывод */
-    .kpi{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px}
-    .pill{background:#eef2ff;color:#3730a3;padding:6px 10px;border-radius:999px;font-weight:600}
-    .table{width:100%;border-collapse:collapse;margin:10px 0 8px;font-size:13px}
-    .table th,.table td{border:1px solid var(--border);padding:8px 10px;text-align:left}
-    .table th{background:#f1f5f9}
-    .badge-ok{background:#dcfce7;color:#166534;padding:3px 6px;border-radius:6px;font-size:12px}
-    .badge-note{background:#fff7ed;color:#9a3412;padding:3px 6px;border-radius:6px;font-size:12px}
-    .small{color:var(--muted);font-size:12px}
+    label { display:block; font-weight:600; margin-bottom: 6px; }
+    .row { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    .muted { color: var(--muted); }
+    .badge {
+      display:inline-block; padding: 2px 6px; font-size: 12px; border-radius: 8px;
+      background:#eef2ff; color:#3730a3; margin-left:6px;
+    }
+
+    input[type="text"], input[type="number"], input[type="file"] {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+      border-radius: 8px; background:#fff; outline: none;
+    }
+    input:focus { border-color:#93c5fd; box-shadow: 0 0 0 3px rgba(147,197,253,0.3); }
+
+    .radio-group { display:flex; gap: 14px; align-items:center; }
+    .actions { display:flex; gap: 10px; align-items:center; flex-wrap: wrap; }
+    button {
+      padding:10px 14px; border-radius: 10px; border:1px solid var(--border);
+      background: #111827; color:#fff; cursor:pointer; transition: opacity .15s ease;
+    }
+    button.secondary { background:#fff; color:#111827; }
+    button:disabled { opacity: .6; cursor:not-allowed; }
+
+    pre {
+      background:#0b1220; color:#d1e0ff; border-radius: 10px; padding: 14px;
+      overflow:auto; border:1px solid #1e293b;
+      min-height: 120px;
+    }
+
+    .inline { display:flex; gap: var(--space); align-items:flex-end; flex-wrap:wrap; }
+    .inline > .field { min-width: 220px; flex:1; }
+
+    /* === Overlay + Spinner (loading) === */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, .28);
+      display: none; place-items: center; z-index: 9999;
+      backdrop-filter: blur(1px);
+    }
+    .overlay.show { display: grid; }
+    .loader {
+      display:flex; flex-direction:column; align-items:center; gap: 10px;
+      background: #fff; border:1px solid var(--border); border-radius: 12px;
+      padding: 16px 18px; min-width: 200px; box-shadow: 0 10px 30px rgba(0,0,0,.10);
+      color:#0f172a;
+    }
+    .spinner {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid #e5e7eb; border-top-color: #2563eb;
+      animation: spin .9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -41,9 +94,18 @@
   <h2>Импорт Приёмки в МойСклад</h2>
 
   <div class="card grid grid-3">
-    <div><label>Организация</label><input id="org" type="text" placeholder="West-parts" /></div>
-    <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад" /></div>
-    <div><label>Поставщик (контрагент)</label><input id="agent" type="text" placeholder="Ebay" /></div>
+    <div>
+      <label>Организация</label>
+      <input id="org" type="text" placeholder="West-parts" />
+    </div>
+    <div>
+      <label>Склад</label>
+      <input id="store" type="text" placeholder="Основной склад" />
+    </div>
+    <div>
+      <label>Поставщик (контрагент)</label>
+      <input id="agent" type="text" placeholder="Ebay" />
+    </div>
   </div>
 
   <div class="card grid grid-2">
@@ -53,13 +115,23 @@
         <label><input type="radio" name="currency" value="usd" checked> Доллар</label>
         <label><input type="radio" name="currency" value="kgs"> Сом</label>
       </div>
-      <p class="muted" style="margin:6px 0 0;">Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.</p>
+      <p class="muted" style="margin:6px 0 0;">
+        Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.
+      </p>
     </div>
     <div class="grid grid-2">
-      <div id="usdWrap"><label>Курс $</label><input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" /></div>
-      <div><label>Коэффициент <span class="badge">по умолч. 1.6</span></label><input id="coef" type="number" step="0.01" min="0" value="1.6" /></div>
-      <div id="shipWrap"><label>Доставка $/кг <span class="badge">по умолч. 15</span></label><input id="ship" type="number" step="0.01" min="0" value="15" /></div>
-      <div><label>Заказ поставщику (опц.)</label><input id="poid" type="text" placeholder="UUID ЗП для привязки" /></div>
+      <div>
+        <label>Курс $</label>
+        <input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" />
+      </div>
+      <div>
+        <label>Коэффициент <span class="badge">по умолч. 1.6</span></label>
+        <input id="coef" type="number" step="0.01" min="0" value="1.6" />
+      </div>
+      <div>
+        <label>Доставка $/кг <span class="badge">по умолч. 15</span></label>
+        <input id="ship" type="number" step="0.01" min="0" value="15" />
+      </div>
     </div>
   </div>
 
@@ -67,8 +139,10 @@
     <div class="inline">
       <div class="field">
         <label>Файл поставщика</label>
-        <input id="file" type="file" accept=".xlsx,.xls,.csv" />
-        <div class="muted" style="margin-top:6px;">Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.</div>
+        <input id="file" type="file" />
+        <div class="muted" style="margin-top:6px;">
+          Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.
+        </div>
       </div>
       <div class="actions">
         <button id="previewBtn" type="button" class="secondary">Превью</button>
@@ -80,9 +154,15 @@
 
   <div class="card">
     <h3>Ответ</h3>
-    <div id="niceOut"></div>
-    <div class="muted" style="margin-top:8px;"><button id="toggleRaw" type="button" class="secondary">Показать сырой JSON</button></div>
-    <pre id="out" style="display:none;">—</pre>
+    <pre id="out">—</pre>
+  </div>
+</div>
+
+<!-- === Overlay (loading) === -->
+<div id="overlay" class="overlay" aria-hidden="true">
+  <div class="loader">
+    <div class="spinner" aria-label="Загрузка"></div>
+    <div id="overlayMsg">Обрабатываем…</div>
   </div>
 </div>
 
@@ -90,124 +170,132 @@
 document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
 
-  const orgEl=$('org'), storeEl=$('store'), agentEl=$('agent');
-  const usdWrap=$('usdWrap'), shipWrap=$('shipWrap');
-  const usdRateEl=$('usdRate'), coefEl=$('coef'), shipEl=$('ship'), poidEl=$('poid'), fileEl=$('file');
-  const outEl=$('out'), hintEl=$('hint'), niceOut=$('niceOut'), toggleRawBtn=$('toggleRaw');
-  const curRadios=document.querySelectorAll('input[name="currency"]');
+  const orgEl   = $('org');
+  const storeEl = $('store');
+  const agentEl = $('agent');
 
-  function getCur(){ for(const r of curRadios) if(r.checked) return r.value; return 'kgs'; }
-  function toggleUsd(){ const isUsd=getCur()==='usd'; if(usdWrap) usdWrap.style.display=isUsd?'':'none'; if(shipWrap) shipWrap.style.display=isUsd?'':'none'; }
-  curRadios.forEach(r=>r.addEventListener('change',toggleUsd)); toggleUsd();
+  const usdRateEl = $('usdRate');
+  const coefEl    = $('coef');
+  const shipEl    = $('ship');
+  const fileEl    = $('file');
+
+  const outEl     = $('out');
+  const hintEl    = $('hint');
+  const previewBtn= $('previewBtn');
+  const importBtn = $('importBtn');
+
+  const overlay   = $('overlay');
+  const overlayMsg= $('overlayMsg');
+
+  const curRadios = document.querySelectorAll('input[name="currency"]');
+
+  function getCur() {
+    for (const r of curRadios) if (r.checked) return r.value;
+    return 'kgs';
+  }
+
+  function toggleUsd() {
+    const isUsd = getCur() === 'usd';
+    const usdWrap  = usdRateEl?.closest('.grid');
+    if (usdWrap) {
+      // курс и доставка — рядом в одной сетке, просто скрывать/показывать оба
+      usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
+      shipEl.closest('div').style.display = isUsd ? '' : 'none';
+    }
+  }
+  curRadios.forEach(r => r.addEventListener('change', toggleUsd));
+  toggleUsd();
+
+  // === Управление загрузкой ===
+  function setLoading(isLoading, message = 'Обрабатываем…') {
+    if (!overlay) return;
+    if (isLoading) {
+      overlay.classList.add('show');
+      overlayMsg && (overlayMsg.textContent = message);
+      previewBtn && (previewBtn.disabled = true);
+      importBtn && (importBtn.disabled = true);
+    } else {
+      overlay.classList.remove('show');
+      previewBtn && (previewBtn.disabled = false);
+      importBtn && (importBtn.disabled = false);
+    }
+  }
 
   function buildQuery({withPriceParams}) {
-    const q=new URLSearchParams();
-    if(orgEl?.value) q.set('organization_name', orgEl.value.trim());
-    if(storeEl?.value) q.set('store_name', storeEl.value.trim());
-    if(agentEl?.value) q.set('agent_name', agentEl.value.trim());
-    q.set('auto_create_products','true'); q.set('auto_create_agent','true');
-    const currency=getCur(); q.set('price_currency', currency);
-    if(withPriceParams){
-      const coef=parseFloat(coefEl?.value||'1.6'); q.set('coef', String(coef));
-      if(currency==='usd'){
-        const rate=parseFloat(usdRateEl?.value||''); if(!rate) throw new Error('Укажите курс доллара');
+    const q = new URLSearchParams();
+    if (orgEl?.value)   q.set('organization_name', orgEl.value.trim());
+    if (storeEl?.value) q.set('store_name', storeEl.value.trim());
+    if (agentEl?.value) q.set('agent_name', agentEl.value.trim());
+
+    q.set('auto_create_products', 'true');
+    q.set('auto_create_agent', 'true');
+
+    const currency = getCur();
+    q.set('price_currency', currency);
+
+    if (withPriceParams) {
+      const coef = parseFloat(coefEl?.value || '1.6');
+      q.set('coef', String(coef));
+
+      if (currency === 'usd') {
+        const rate = parseFloat(usdRateEl?.value || '');
+        if (!rate) throw new Error('Укажите курс доллара');
         q.set('usd_rate', String(rate));
-        const ship=parseFloat(shipEl?.value||'15'); q.set('shipping_per_kg_usd', String(ship));
+
+        const ship = parseFloat(shipEl?.value || '15');
+        q.set('shipping_per_kg_usd', String(ship));
       }
     }
-    const poid=poidEl?.value?.trim(); if(poid) q.set('purchase_order_id', poid);
+
     return q;
   }
 
-  function htmlEscape(s){return String(s).replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));}
-  function renderNiceResponse(data, path){
-    if(!niceOut) return;
-    const isPreview = path.includes('preview');
-    const rowsTotal = data.rows_total ?? data.created_positions ?? 0;
-    const createCnt = data.will_create_count ?? (data.will_create?.length||0);
-    const useCnt    = data.will_use_existing_count ?? (data.will_use_existing?.length||0);
-    let html = `<div class="kpi">
-      <div class="pill">Всего строк: <b>${rowsTotal}</b></div>
-      <div class="pill">Найдены товары: <b>${useCnt}</b></div>
-      <div class="pill">Создать товары: <b>${createCnt}</b></div>
-    </div>`;
-
-    if (data.will_use_existing?.length){
-      html += `<h4>Сопоставлено</h4><table class="table">
-        <thead><tr><th>#</th><th>Артикул</th><th>Наименование</th><th>Производитель</th><th>Product ID</th><th>ЗП</th></tr></thead><tbody>`;
-      data.will_use_existing.forEach((r,i)=>{
-        const matches = (data.matches_by_article && data.matches_by_article[r.article]) || [];
-        const poCell = matches.length ? `<span class="badge-ok">совпадений в ЗП: ${matches.length}</span>`
-                                      : `<span class="badge-note">нет совпадений</span>`;
-        html += `<tr>
-          <td>${i+1}</td><td>${htmlEscape(r.article)}</td>
-          <td>${htmlEscape(r.name||'')}</td>
-          <td class="small">${htmlEscape(r.manufacturer||'')}</td>
-          <td class="small">${htmlEscape(r.product_id||'')}</td>
-          <td>${poCell}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-
-    if (data.will_create?.length){
-      html += `<h4>Будут созданы</h4><table class="table">
-        <thead><tr><th>#</th><th>Артикул</th><th>Наименование</th><th>Производитель</th></tr></thead><tbody>`;
-      data.will_create.forEach((r,i)=>{
-        html += `<tr>
-          <td>${i+1}</td><td>${htmlEscape(r.article)}</td>
-          <td>${htmlEscape(r.name||'')}</td>
-          <td class="small">${htmlEscape(r.manufacturer||'')}</td>
-        </tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-
-    if (isPreview && data.calculated_prices?.length){
-      html += `<h4>Рассчитанные цены (сом)</h4><table class="table">
-        <thead><tr><th>#</th><th>Артикул</th><th>Цена (сом)</th></tr></thead><tbody>`;
-      data.calculated_prices.forEach((r,i)=>{
-        html += `<tr><td>${i+1}</td><td>${htmlEscape(r.article)}</td><td>${Number(r.price_kgs).toLocaleString('ru-RU')}</td></tr>`;
-      });
-      html += `</tbody></table>`;
-    }
-
-    if (data.note){ html += `<div class="small">${htmlEscape(data.note)}</div>`; }
-    if (!isPreview && data.supply_meta){
-      const href = data.supply_meta.href || '';
-      html += `<p><span class="badge-ok">Приёмка создана</span> <span class="small">${htmlEscape(href)}</span></p>`;
-    }
-
-    niceOut.innerHTML = html;
-    if (toggleRawBtn && outEl){
-      outEl.style.display = 'none';
-      toggleRawBtn.textContent = 'Показать сырой JSON';
-      toggleRawBtn.onclick = () => {
-        const vis = outEl.style.display !== 'none';
-        outEl.style.display = vis ? 'none' : 'block';
-        toggleRawBtn.textContent = vis ? 'Показать сырой JSON' : 'Скрыть сырой JSON';
-      };
-    }
-  }
-
   async function callApi(path, withPriceParams) {
-    if (!outEl || !hintEl) return;
-    outEl.textContent = 'Загрузка...'; hintEl.textContent = ''; niceOut.innerHTML = '';
-    const f = fileEl?.files?.[0]; if (!f){ outEl.textContent='Выберите файл.'; return; }
+    outEl && (outEl.textContent = '—');
+    hintEl && (hintEl.textContent = '');
 
-    let q; try { q = buildQuery({withPriceParams}); } catch (e) { outEl.textContent = e.message || String(e); return; }
-    const form = new FormData(); form.append('file', f);
+    const f = fileEl?.files?.[0];
+    if (!f) {
+      outEl && (outEl.textContent = 'Выберите файл.');
+      return;
+    }
 
-    const resp = await fetch(`${path}?${q.toString()}`, { method:'POST', body:form });
-    let data; try { data = await resp.json(); } catch { data = { error: await resp.text() }; }
-    outEl.textContent = JSON.stringify(data, null, 2);
-    renderNiceResponse(data, path);
+    let q;
+    try {
+      q = buildQuery({withPriceParams});
+    } catch (e) {
+      outEl && (outEl.textContent = e.message || String(e));
+      return;
+    }
 
-    if (resp.ok && path.includes('import-invoice-to-supply')) hintEl.textContent = 'Готово. Документ Приёмки создан.';
+    const form = new FormData();
+    form.append('file', f);
+
+    // Показать загрузку
+    setLoading(true, path.includes('preview') ? 'Готовим превью…' : 'Создаём приёмку…');
+
+    try {
+      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
+      let data;
+      try { data = await resp.json(); } catch { data = { error: await resp.text() }; }
+      outEl && (outEl.textContent = JSON.stringify(data, null, 2));
+
+      if (resp.ok && path.includes('import-invoice-to-supply')) {
+        hintEl && (hintEl.textContent = 'Готово. Документ Приёмки создан.');
+      } else if (!resp.ok) {
+        hintEl && (hintEl.textContent = 'Ошибка. Посмотрите детали в блоке «Ответ».');
+      }
+    } catch (err) {
+      outEl && (outEl.textContent = 'Сеть/сервер недоступен. ' + (err?.message || err));
+      hintEl && (hintEl.textContent = 'Ошибка сети.');
+    } finally {
+      // Скрыть загрузку
+      setLoading(false);
+    }
   }
 
-  $('previewBtn')?.addEventListener('click', () => callApi('/import-invoice-preview/', true));
-  $('importBtn')?.addEventListener('click', () => callApi('/import-invoice-to-supply/', true));
+  previewBtn?.addEventListener('click', () => callApi('/import-invoice-preview/', true));
+  importBtn?.addEventListener('click', () => callApi('/import-invoice-to-supply/', true));
 });
 </script>
 </body>
