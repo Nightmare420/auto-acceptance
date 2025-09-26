@@ -6,62 +6,54 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
-      --bg: #f8fafc; --card: #ffffff; --text: #0f172a; --muted: #64748b;
-      --border: #e2e8f0; --accent: #2563eb; --radius: 12px; --space: 14px; --maxw: 1100px;
+      --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#64748b;
+      --border:#e2e8f0; --accent:#2563eb; --radius:12px; --space:14px; --maxw:1100px;
     }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; display:flex; justify-content:center; }
-    .container { width: 100%; max-width: var(--maxw); padding: 24px 16px; }
-    h1, h2, h3 { margin: 0 0 14px; }
-    .card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:18px; box-shadow:0 1px 2px rgba(16,24,40,0.04); margin-bottom:16px; }
-    .grid { display:grid; gap:var(--space); }
-    .grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
-    .grid-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
-    @media (max-width: 980px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
-
-    label { display:block; font-weight:600; margin-bottom:6px; }
-    .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    .muted { color: var(--muted); }
-    .badge { display:inline-block; padding:2px 6px; font-size:12px; border-radius:8px; background:#eef2ff; color:#3730a3; margin-left:6px; }
-
-    input[type="text"], input[type="number"], input[type="file"] {
-      width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:#fff; outline:none;
-    }
-    input:focus { border-color:#93c5fd; box-shadow:0 0 0 3px rgba(147,197,253,0.3); }
-
-    .radio-group { display:flex; gap:14px; align-items:center; }
-    .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    button { padding:10px 14px; border-radius:10px; border:1px solid var(--border); background:#111827; color:#fff; cursor:pointer; transition:opacity .15s ease; }
-    button.secondary { background:#fff; color:#111827; }
-    button:disabled { opacity:.6; cursor:not-allowed; }
-
-    table { width:100%; border-collapse: collapse; font-size:13px; }
-    th, td { border-top:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align: top; }
-    th { background:#f1f5f9; }
-    tr:hover td { background:#fafafa; }
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#ecfeff; color:#0369a1; font-size:12px; border:1px solid #bae6fd; }
-    .ok { background:#ecfdf5; color:#065f46; border-color:#a7f3d0; }
-    .warn { background:#fff7ed; color:#9a3412; border-color:#fed7aa; }
-
-    .inline { display:flex; gap:var(--space); align-items:flex-end; flex-wrap:wrap; }
-    .inline > .field { min-width:220px; flex:1; }
-
-    /* Overlay + Spinner */
-    .overlay { position:fixed; inset:0; background:rgba(15,23,42,.28); display:none; place-items:center; z-index:9999; backdrop-filter: blur(1px); }
-    .overlay.show { display:grid; }
-    .loader { display:flex; flex-direction:column; align-items:center; gap:10px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px 18px; min-width:220px; box-shadow:0 10px 30px rgba(0,0,0,.10); color:#0f172a; }
-    .spinner { width:28px; height:28px; border-radius:50%; border:3px solid #e5e7eb; border-top-color:#2563eb; animation:spin .9s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    details summary { cursor: pointer; user-select:none; }
-    pre { background:#0b1220; color:#d1e0ff; border-radius:10px; padding:14px; overflow:auto; border:1px solid #1e293b; }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
+    .container{width:100%;max-width:var(--maxw);padding:24px 16px}
+    h1,h2,h3{margin:0 0 14px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);margin-bottom:16px}
+    .grid{display:grid;gap:var(--space)}
+    .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    @media (max-width:980px){.grid-2,.grid-3{grid-template-columns:1fr}}
+    label{display:block;font-weight:600;margin-bottom:6px}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .muted{color:var(--muted)}
+    .badge{display:inline-block;padding:2px 6px;font-size:12px;border-radius:8px;background:#eef2ff;color:#3730a3;margin-left:6px}
+    input[type="text"],input[type="number"],input[type="file"]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;outline:none}
+    input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.3)}
+    .radio-group{display:flex;gap:14px;align-items:center}
+    .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer;transition:opacity .15s ease}
+    button.secondary{background:#fff;color:#111827}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{border-top:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
+    th{background:#f1f5f9}
+    tr:hover td{background:#fafafa}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#ecfeff;color:#0369a1;font-size:12px;border:1px solid #bae6fd}
+    .ok{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
+    .warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
+    .inline{display:flex;gap:var(--space);align-items:flex-end;flex-wrap:wrap}
+    .inline>.field{min-width:220px;flex:1}
+    /* overlay */
+    .overlay{position:fixed;inset:0;background:rgba(15,23,42,.28);display:none;place-items:center;z-index:9999;backdrop-filter:blur(1px)}
+    .overlay.show{display:grid}
+    .loader{display:flex;flex-direction:column;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 18px;min-width:220px;box-shadow:0 10px 30px rgba(0,0,0,.1);color:#0f172a}
+    .spinner{width:28px;height:28px;border-radius:50%;border:3px solid #e5e7eb;border-top-color:#2563eb;animation:spin .9s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    details summary{cursor:pointer;user-select:none}
+    pre{background:#0b1220;color:#d1e0ff;border-radius:10px;padding:14px;overflow:auto;border:1px solid #1e293b}
   </style>
 </head>
 <body>
 <div class="container">
   <h2>Импорт Приёмки в МойСклад</h2>
 
+  <!-- Блок 1: контекст -->
   <div class="card grid grid-3">
     <div>
       <label>Организация</label>
@@ -75,8 +67,17 @@
       <label>Поставщик (контрагент)</label>
       <input id="agent" type="text" placeholder="Ebay" />
     </div>
+    <div style="grid-column:1 / -1">
+      <label>ID заказа поставщику (необязательно)</label>
+      <input id="poid" type="text" placeholder="UUID из ссылки МойСклад (purchaseorder)" />
+      <div class="muted" style="margin-top:6px">
+        Пример: в ссылке вида <code>.../#purchaseorder/edit?id=<b>UUID</b></code> возьмите этот <b>UUID</b>.
+        Если оставить пустым, сверка пойдёт по последним заказам указанного поставщика.
+      </div>
+    </div>
   </div>
 
+  <!-- Блок 2: цены/валюта -->
   <div class="card grid grid-2">
     <div>
       <label>Валюта</label>
@@ -84,7 +85,7 @@
         <label><input type="radio" name="currency" value="usd" checked> Доллар</label>
         <label><input type="radio" name="currency" value="kgs"> Сом</label>
       </div>
-      <p class="muted" style="margin:6px 0 0;">Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.</p>
+      <p class="muted" style="margin:6px 0 0">Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.</p>
     </div>
     <div class="grid grid-2">
       <div>
@@ -102,12 +103,13 @@
     </div>
   </div>
 
+  <!-- Блок 3: файл + действия -->
   <div class="card">
     <div class="inline">
       <div class="field">
         <label>Файл поставщика</label>
         <input id="file" type="file" />
-        <div class="muted" style="margin-top:6px;">Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.</div>
+        <div class="muted" style="margin-top:6px">Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.</div>
       </div>
       <div class="actions">
         <button id="previewBtn" type="button" class="secondary">Превью</button>
@@ -117,41 +119,40 @@
     </div>
   </div>
 
-  <!-- Результат -->
-  <div id="resultCard" class="card" style="display:none;">
+  <!-- Блок 4: результат -->
+  <div id="resultCard" class="card" style="display:none">
     <h3>Результат</h3>
-    <div id="stats" class="row" style="gap:8px; margin:8px 0 12px;"></div>
+    <div id="stats" class="row" style="gap:8px;margin:8px 0 12px"></div>
+    <div id="poUsed" class="muted" style="margin:6px 0 12px"></div>
 
-    <div id="poUsed" class="muted" style="margin:6px 0 12px;"></div>
-
-    <div id="matchesBox" style="display:none;">
+    <div id="matchesBox" style="display:none">
       <h4>Совпадения с заказами поставщику</h4>
       <div id="matchesTableWrap"></div>
     </div>
 
-    <div id="existingBox" style="display:none; margin-top:16px;">
+    <div id="existingBox" style="display:none;margin-top:16px">
       <h4>Найдены в товарах (по code)</h4>
       <div id="existingTableWrap"></div>
     </div>
 
-    <div id="createBox" style="display:none; margin-top:16px;">
+    <div id="createBox" style="display:none;margin-top:16px">
       <h4>Будут созданы</h4>
       <div id="createTableWrap"></div>
     </div>
 
-    <div id="priceBox" style="display:none; margin-top:16px;">
+    <div id="priceBox" style="display:none;margin-top:16px">
       <h4>Пересчитанные цены (сомы)</h4>
       <div id="priceTableWrap"></div>
     </div>
 
-    <details style="margin-top:16px;">
+    <details style="margin-top:16px">
       <summary>Показать сырой JSON (для отладки)</summary>
       <pre id="raw">—</pre>
     </details>
   </div>
 </div>
 
-<!-- Overlay -->
+<!-- overlay -->
 <div id="overlay" class="overlay" aria-hidden="true">
   <div class="loader">
     <div class="spinner" aria-label="Загрузка"></div>
@@ -163,249 +164,172 @@
 document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
 
-  const orgEl   = $('org');
-  const storeEl = $('store');
-  const agentEl = $('agent');
-  const usdRateEl = $('usdRate');
-  const coefEl    = $('coef');
-  const shipEl    = $('ship');
-  const fileEl    = $('file');
+  // inputs
+  const orgEl = $('org'), storeEl = $('store'), agentEl = $('agent');
+  const poidEl = $('poid');
+  const usdRateEl = $('usdRate'), coefEl = $('coef'), shipEl = $('ship'), fileEl = $('file');
 
-  const previewBtn= $('previewBtn');
-  const importBtn = $('importBtn');
-  const hintEl    = $('hint');
+  // ui
+  const previewBtn = $('previewBtn'), importBtn = $('importBtn'), hintEl = $('hint');
+  const overlay = $('overlay'), overlayMsg = $('overlayMsg');
 
-  const overlay   = $('overlay');
-  const overlayMsg= $('overlayMsg');
-
-  const resultCard= $('resultCard');
-  const statsEl   = $('stats');
-  const poUsedEl  = $('poUsed');
-  const matchesBox= $('matchesBox');
-  const matchesWrap = $('matchesTableWrap');
-  const existingBox= $('existingBox');
-  const existingWrap= $('existingTableWrap');
-  const createBox  = $('createBox');
-  const createWrap = $('createTableWrap');
-  const priceBox   = $('priceBox');
-  const priceWrap  = $('priceTableWrap');
-  const rawEl      = $('raw');
+  const resultCard = $('resultCard'), statsEl = $('stats'), poUsedEl = $('poUsed');
+  const matchesBox = $('matchesBox'), matchesWrap = $('matchesTableWrap');
+  const existingBox = $('existingBox'), existingWrap = $('existingTableWrap');
+  const createBox = $('createBox'), createWrap = $('createTableWrap');
+  const priceBox = $('priceBox'), priceWrap = $('priceTableWrap');
+  const rawEl = $('raw');
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
-  function getCur() {
-    for (const r of curRadios) if (r.checked) return r.value;
-    return 'kgs';
-  }
-
-  function toggleUsd() {
-    const isUsd = getCur() === 'usd';
+  function getCur(){ for (const r of curRadios) if (r.checked) return r.value; return 'kgs'; }
+  function toggleUsd(){
+    const isUsd = getCur()==='usd';
     usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
     shipEl.closest('div').style.display = isUsd ? '' : 'none';
   }
-  curRadios.forEach(r => r.addEventListener('change', toggleUsd));
-  toggleUsd();
+  curRadios.forEach(r=>r.addEventListener('change',toggleUsd)); toggleUsd();
 
-  function setLoading(isLoading, msg='Обрабатываем…') {
-    if (!overlay) return;
-    if (isLoading) {
-      overlay.classList.add('show');
-      overlayMsg && (overlayMsg.textContent = msg);
-      previewBtn.disabled = true; importBtn.disabled = true;
-    } else {
-      overlay.classList.remove('show');
-      previewBtn.disabled = false; importBtn.disabled = false;
-    }
+  function setLoading(v,msg='Обрабатываем…'){
+    if(v){ overlay.classList.add('show'); overlayMsg.textContent = msg; previewBtn.disabled=importBtn.disabled=true; }
+    else{ overlay.classList.remove('show'); previewBtn.disabled=importBtn.disabled=false; }
   }
 
-  function buildQuery({withPriceParams}) {
+  function buildQuery({withPriceParams}){
     const q = new URLSearchParams();
-    if (orgEl?.value)   q.set('organization_name', orgEl.value.trim());
-    if (storeEl?.value) q.set('store_name', storeEl.value.trim());
-    if (agentEl?.value) q.set('agent_name', agentEl.value.trim());
+    if (orgEl.value.trim())   q.set('organization_name', orgEl.value.trim());
+    if (storeEl.value.trim()) q.set('store_name', storeEl.value.trim());
+    if (agentEl.value.trim()) q.set('agent_name', agentEl.value.trim());
 
-    q.set('auto_create_products', 'true');
-    q.set('auto_create_agent', 'true');
+    // новый параметр — ID заказа поставщику
+    const poid = poidEl.value.trim();
+    if (poid) q.set('purchase_order_id', poid);
+
+    q.set('auto_create_products','true');
+    q.set('auto_create_agent','true');
 
     const currency = getCur();
     q.set('price_currency', currency);
-    if (withPriceParams) {
-      const coef = parseFloat(coefEl?.value || '1.6');
-      q.set('coef', String(coef));
-      if (currency === 'usd') {
-        const rate = parseFloat(usdRateEl?.value || '');
-        if (!rate) throw new Error('Укажите курс доллара');
+
+    if (withPriceParams){
+      const coef = parseFloat(coefEl.value || '1.6'); q.set('coef', String(coef));
+      if (currency === 'usd'){
+        const rate = parseFloat(usdRateEl.value || ''); if(!rate) throw new Error('Укажите курс доллара');
         q.set('usd_rate', String(rate));
-        const ship = parseFloat(shipEl?.value || '15');
-        q.set('shipping_per_kg_usd', String(ship));
+        const ship = parseFloat(shipEl.value || '15'); q.set('shipping_per_kg_usd', String(ship));
       }
     }
     return q;
   }
 
-  function el(tag, props={}, ...children) {
-    const node = document.createElement(tag);
-    for (const [k,v] of Object.entries(props)) {
-      if (k === 'class') node.className = v;
-      else if (k === 'text') node.textContent = v;
-      else node.setAttribute(k, v);
+  function el(tag, props={}, ...children){
+    const node=document.createElement(tag);
+    for (const [k,v] of Object.entries(props)){
+      if(k==='class') node.className=v;
+      else if(k==='text') node.textContent=v;
+      else node.setAttribute(k,v);
     }
-    for (const ch of children) {
-      if (ch == null) continue;
-      if (typeof ch === 'string') node.appendChild(document.createTextNode(ch));
+    for (const ch of children){
+      if(ch==null) continue;
+      if(typeof ch==='string') node.appendChild(document.createTextNode(ch));
       else node.appendChild(ch);
     }
     return node;
   }
-
-  function renderPill(text, type) {
-    return el('span', {class: 'pill ' + (type || '') , text});
-  }
-
-  function buildTable(headers, rows) {
-    const table = el('table');
-    const thead = el('thead');
-    const trh = el('tr');
-    headers.forEach(h => trh.appendChild(el('th', {text: h})));
+  const pill=(t,c)=>el('span',{class:'pill '+(c||''),text:t});
+  function table(headers,rows){
+    const tbl=el('table'), thead=el('thead'), trh=el('tr');
+    headers.forEach(h=>trh.appendChild(el('th',{text:h})));
     thead.appendChild(trh);
-    const tbody = el('tbody');
-    rows.forEach(r => {
-      const tr = el('tr');
-      r.forEach(cell => {
-        const td = el('td');
-        if (cell instanceof Node) td.appendChild(cell);
-        else td.textContent = cell ?? '';
+    const tbody=el('tbody');
+    rows.forEach(r=>{
+      const tr=el('tr');
+      r.forEach(cell=>{
+        const td=el('td');
+        if(cell instanceof Node) td.appendChild(cell); else td.textContent = cell ?? '';
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     });
-    table.appendChild(thead);
-    table.appendChild(tbody);
-    return table;
+    tbl.appendChild(thead); tbl.appendChild(tbody); return tbl;
   }
 
-  function renderResult(data, forImport=false) {
-    resultCard.style.display = '';
-    statsEl.innerHTML = '';
-    matchesWrap.innerHTML = '';
-    existingWrap.innerHTML = '';
-    createWrap.innerHTML = '';
-    priceWrap.innerHTML = '';
-    poUsedEl.textContent = '';
-    rawEl.textContent = JSON.stringify(data, null, 2);
+  function renderResult(data, forImport=false){
+    resultCard.style.display='';
+    statsEl.innerHTML=''; matchesWrap.innerHTML=''; existingWrap.innerHTML='';
+    createWrap.innerHTML=''; priceWrap.innerHTML=''; poUsedEl.textContent='';
+    rawEl.textContent = JSON.stringify(data,null,2);
 
-    if (data.error || data.detail) {
-      statsEl.appendChild(renderPill('Ошибка', 'warn'));
-      return;
-    }
+    if (data.error || data.detail){ statsEl.appendChild(pill('Ошибка','warn')); return; }
 
-    // Итоги
-    const pills = [];
-    if (data.rows_total != null) pills.push(renderPill(`Позиции: ${data.rows_total}`));
-    if (data.will_use_existing_count != null) pills.push(renderPill(`Найдены: ${data.will_use_existing_count}`, 'ok'));
-    if (data.will_create_count != null) pills.push(renderPill(`К созданию: ${data.will_create_count}`, 'warn'));
-    if (data.created_positions != null) pills.push(renderPill(`Создано позиций: ${data.created_positions}`, 'ok'));
-    if (data.not_found_items && data.not_found_items.length) pills.push(renderPill(`Не найдены: ${data.not_found_items.length}`, 'warn'));
-    pills.forEach(p => statsEl.appendChild(p));
+    const pills=[];
+    if (data.rows_total!=null) pills.push(pill(`Позиции: ${data.rows_total}`));
+    if (data.will_use_existing_count!=null) pills.push(pill(`Найдены: ${data.will_use_existing_count}`,'ok'));
+    if (data.will_create_count!=null) pills.push(pill(`К созданию: ${data.will_create_count}`,'warn'));
+    if (data.created_positions!=null) pills.push(pill(`Создано позиций: ${data.created_positions}`,'ok'));
+    if (data.not_found_items && data.not_found_items.length) pills.push(pill(`Не найдены: ${data.not_found_items.length}`,'warn'));
+    pills.forEach(p=>statsEl.appendChild(p));
 
-    // Какие ЗП использовали
-    if (data.purchase_orders_used && data.purchase_orders_used.length) {
-      const names = data.purchase_orders_used.map(p => p.name || p.id).join(', ');
+    if (data.purchase_orders_used && data.purchase_orders_used.length){
+      const names = data.purchase_orders_used.map(p=>p.name||p.id).join(', ');
       poUsedEl.textContent = `Проверены заказы поставщику: ${names}`;
     }
 
-    // Совпадения с ЗП
-    if (data.matches_by_article && Object.keys(data.matches_by_article).length) {
-      matchesBox.style.display = '';
-      const rows = Object.entries(data.matches_by_article).map(([article, list]) => {
-        const where = (list || []).map(x => (x.po_name || x.po_id || '')).join(', ');
+    if (data.matches_by_article && Object.keys(data.matches_by_article).length){
+      matchesBox.style.display='';
+      const rows = Object.entries(data.matches_by_article).map(([article,list])=>{
+        const where=(list||[]).map(x=>x.po_name||x.po_id||'').join(', ');
         return [article, where || '—'];
       });
-      matchesWrap.appendChild(buildTable(['Артикул', 'Заказы поставщику'], rows));
-    } else {
-      matchesBox.style.display = 'none';
-    }
+      matchesWrap.appendChild(table(['Артикул','Заказы поставщику'], rows));
+    } else matchesBox.style.display='none';
 
-    // Найдены (существующие товары)
-    const ex = data.will_use_existing || [];
-    if (ex.length) {
-      existingBox.style.display = '';
-      existingWrap.appendChild(buildTable(
-        ['Артикул (code)', 'Наименование', 'Производитель', 'Product ID'],
-        ex.map(x => [x.article || '', x.name || '', x.manufacturer || '', x.product_id || ''])
-      ));
-    } else {
-      existingBox.style.display = 'none';
-    }
+    const ex = data.will_use_existing||[];
+    if (ex.length){
+      existingBox.style.display='';
+      existingWrap.appendChild(table(['Артикул (code)','Наименование','Производитель','Product ID'],
+        ex.map(x=>[x.article||'',x.name||'',x.manufacturer||'',x.product_id||''])));
+    } else existingBox.style.display='none';
 
-    // К созданию
-    const cr = data.will_create || [];
-    if (cr.length) {
-      createBox.style.display = '';
-      createWrap.appendChild(buildTable(
-        ['Артикул (code)', 'Наименование', 'Производитель'],
-        cr.map(x => [x.article || '', x.name || '', x.manufacturer || ''])
-      ));
-    } else {
-      createBox.style.display = 'none';
-    }
+    const cr = data.will_create||[];
+    if (cr.length){
+      createBox.style.display='';
+      createWrap.appendChild(table(['Артикул (code)','Наименование','Производитель'],
+        cr.map(x=>[x.article||'',x.name||'',x.manufacturer||''])));
+    } else createBox.style.display='none';
 
-    // Пересчитанные цены
-    const cp = data.calculated_prices || [];
-    if (cp.length) {
-      priceBox.style.display = '';
-      priceWrap.appendChild(buildTable(
-        ['Артикул', 'Цена (KGS)'],
-        cp.map(x => [x.article || '', (x.price_kgs != null ? String(x.price_kgs) : '—')])
-      ));
-    } else {
-      priceBox.style.display = 'none';
-    }
+    const cp = data.calculated_prices||[];
+    if (cp.length){
+      priceBox.style.display='';
+      priceWrap.appendChild(table(['Артикул','Цена (KGS)'],
+        cp.map(x=>[x.article||'', (x.price_kgs!=null? String(x.price_kgs) : '—')])));
+    } else priceBox.style.display='none';
 
-    // Подпись для импорта
-    if (forImport && !data.error && !data.detail) {
-      hintEl.textContent = 'Готово. Документ Приёмки создан.';
-    }
+    if (forImport && !data.error && !data.detail){ hintEl.textContent='Готово. Документ Приёмки создан.'; }
   }
 
-  async function callApi(path, withPriceParams) {
-    hintEl.textContent = '';
-    resultCard.style.display = 'none';
+  async function callApi(path, withPriceParams){
+    hintEl.textContent=''; resultCard.style.display='none';
+    const f=fileEl.files?.[0]; if(!f){ hintEl.textContent='Выберите файл.'; return; }
 
-    const f = fileEl?.files?.[0];
-    if (!f) { hintEl.textContent = 'Выберите файл.'; return; }
+    let q; try{ q=buildQuery({withPriceParams}); } catch(e){ hintEl.textContent=e.message||String(e); return; }
 
-    let q;
-    try { q = buildQuery({withPriceParams}); }
-    catch (e) { hintEl.textContent = e.message || String(e); return; }
+    const form=new FormData(); form.append('file', f);
+    setLoading(true, path.includes('preview')?'Готовим превью…':'Создаём приёмку…');
 
-    const form = new FormData();
-    form.append('file', f);
-
-    setLoading(true, path.includes('preview') ? 'Готовим превью…' : 'Создаём приёмку…');
-
-    try {
-      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
-      let data;
-      try { data = await resp.json(); }
-      catch { data = { error: await resp.text() }; }
-
+    try{
+      const resp=await fetch(`${path}?${q.toString()}`,{method:'POST',body:form});
+      let data; try{ data=await resp.json(); } catch{ data={error:await resp.text()}; }
       renderResult(data, path.includes('import-invoice-to-supply'));
-
-      if (!resp.ok) {
-        hintEl.textContent = 'Ошибка. Смотрите детали ниже.';
-      }
-    } catch (err) {
-      resultCard.style.display = '';
-      rawEl.textContent = 'Сеть/сервер недоступен. ' + (err?.message || err);
-      hintEl.textContent = 'Ошибка сети.';
-    } finally {
-      setLoading(false);
-    }
+      if(!resp.ok) hintEl.textContent='Ошибка. Смотрите детали ниже.';
+    }catch(err){
+      resultCard.style.display=''; rawEl.textContent='Сеть/сервер недоступен. '+(err?.message||err);
+      hintEl.textContent='Ошибка сети.';
+    }finally{ setLoading(false); }
   }
 
-  $('previewBtn')?.addEventListener('click', () => callApi('/import-invoice-preview/', true));
-  $('importBtn')?.addEventListener('click', () => callApi('/import-invoice-to-supply/', true));
+  $('previewBtn')?.addEventListener('click',()=>callApi('/import-invoice-preview/',true));
+  $('importBtn')?.addEventListener('click',()=>callApi('/import-invoice-to-supply/',true));
 });
 </script>
 </body>
