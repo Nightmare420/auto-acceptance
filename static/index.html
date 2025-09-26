@@ -125,7 +125,7 @@
     <div id="stats" class="row" style="gap:8px;margin:8px 0 12px"></div>
     <div id="poUsed" class="muted" style="margin:6px 0 12px"></div>
 
-    <div id="matchesBox" style="display:none">
+    <div id="matchesBox">
       <h4>Совпадения с заказами поставщику</h4>
       <div id="matchesTableWrap"></div>
     </div>
@@ -201,7 +201,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (storeEl.value.trim()) q.set('store_name', storeEl.value.trim());
     if (agentEl.value.trim()) q.set('agent_name', agentEl.value.trim());
 
-    // новый параметр — ID заказа поставщику
     const poid = poidEl.value.trim();
     if (poid) q.set('purchase_order_id', poid);
 
@@ -270,19 +269,46 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data.not_found_items && data.not_found_items.length) pills.push(pill(`Не найдены: ${data.not_found_items.length}`,'warn'));
     pills.forEach(p=>statsEl.appendChild(p));
 
-    if (data.purchase_orders_used && data.purchase_orders_used.length){
-      const names = data.purchase_orders_used.map(p=>p.name||p.id).join(', ');
-      poUsedEl.textContent = `Проверены заказы поставщику: ${names}`;
-    }
+    // ===== Совпадения с ЗП — всегда показываем статус =====
+    (function renderPOMatches(){
+      matchesBox.style.display = '';      // не скрываем блок
+      matchesWrap.innerHTML = '';         // очищаем содержимое
 
-    if (data.matches_by_article && Object.keys(data.matches_by_article).length){
-      matchesBox.style.display='';
-      const rows = Object.entries(data.matches_by_article).map(([article,list])=>{
-        const where=(list||[]).map(x=>x.po_name||x.po_id||'').join(', ');
-        return [article, where || '—'];
-      });
-      matchesWrap.appendChild(table(['Артикул','Заказы поставщику'], rows));
-    } else matchesBox.style.display='none';
+      // поддерживаем оба поля: matches_by_article (основное) и po_matches (на всякий)
+      const mb = data.matches_by_article || data.po_matches || {};
+      const poUsed = Array.isArray(data.purchase_orders_used) ? data.purchase_orders_used : [];
+
+      // контекст: по каким ЗП сверяли
+      let contextMsg = '';
+      if (poUsed.length) {
+        const names = poUsed.map(p => p.name || p.id).join(', ');
+        contextMsg = `Проверены заказы поставщику: ${names}`;
+      } else if ((data._po_check || '').toString() === 'skipped' || (!data.purchase_orders_used && !data.matches_by_article && !data.po_matches)) {
+        contextMsg = 'Сверка не выполнялась (не указан ID заказа и не задан поставщик).';
+      } else {
+        contextMsg = 'Сверка заказов: нет данных от сервера.';
+      }
+      poUsedEl.textContent = contextMsg;
+
+      const entries = Object.entries(mb);
+      const matchCount = entries.reduce((acc, [, arr]) => acc + (Array.isArray(arr) ? arr.length : 0), 0);
+
+      if (matchCount > 0) {
+        const hdr = el('div', {class:'muted', style:'margin:6px 0 8px', text:`Найдены совпадения (${matchCount}).`});
+        matchesWrap.appendChild(hdr);
+        const rows = entries.map(([article, list])=>{
+          const where = (list || []).map(x => (x.po_name || x.po_id || '')).join(', ');
+          return [article, where || '—'];
+        });
+        matchesWrap.appendChild(table(['Артикул (из файла)','Совпавшие заказы поставщику'], rows));
+      } else {
+        const info = el('div', {class:'muted', style:'margin:6px 0 8px',
+          text: (poUsed.length || data.matches_by_article || data.po_matches) ? 'Совпадений не найдено.' : 'Сверка не выполнялась.'
+        });
+        matchesWrap.appendChild(info);
+      }
+    })();
+    // ===== end: Совпадения с ЗП =====
 
     const ex = data.will_use_existing||[];
     if (ex.length){
