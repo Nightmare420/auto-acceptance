@@ -92,110 +92,158 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
-  const org=$('org'), store=$('store'), agent=$('agent'),
-        usdRate=$('usdRate'), coef=$('coef'), ship=$('ship'),
-        fileEl=$('file'), status=$('status'),
-        results=$('results'), table=$('table'),
-        tHead=table.querySelector('thead'), tBody=table.querySelector('tbody'),
-        debugBox=$('debugBox'), debugPre=$('debug');
+  const orgEl=$('org'), storeEl=$('store'), agentEl=$('agent');
+  const usdRateEl=$('usdRate'), coefEl=$('coef'), shipEl=$('ship');
+  const fileEl=$('file'), outEl=$('out'), hintEl=$('hint');
+  const curRadios=document.querySelectorAll('input[name="currency"]');
 
-  const curRadios = document.querySelectorAll('input[name="currency"]');
-  const getCur = () => { for (const r of curRadios) if (r.checked) return r.value; return 'usd'; }
-  const toggleUsd = () => {
-    const isUsd = getCur()==='usd';
-    $('usdWrap').style.display = isUsd ? '' : 'none';
-    $('shipWrap').style.display = isUsd ? '' : 'none';
-  };
-  curRadios.forEach(r=>r.addEventListener('change',toggleUsd));
-  toggleUsd();
+  let lastRows=[], weights={};
 
-  function buildQS(withPrice=true){
-    const q = new URLSearchParams();
-    if (org.value.trim()) q.set('organization_name', org.value.trim());
-    if (store.value.trim()) q.set('store_name', store.value.trim());
-    if (agent.value.trim()) q.set('agent_name', agent.value.trim());
+  function getCur(){ for(const r of curRadios) if(r.checked) return r.value; return 'usd'; }
+
+  function kgsForRow(currency, price, weight){
+    const coef=parseFloat(coefEl.value||'1.6');
+    const ship=parseFloat(shipEl.value||'15');
+    const rate=parseFloat(usdRateEl.value||'0');
+    if(price==null||isNaN(price)) return null;
+    const w=weight?parseFloat(weight):0;
+    if(String(currency).toLowerCase()==='usd'){
+      if(!rate) return null;
+      // (цена*коэфф + вес*доставка) * курс
+      return (price*coef + w*ship) * rate;
+    }else{
+      return price*coef;
+    }
+  }
+
+  function buildQuery({withPriceParams, weightsJson}){
+    const q=new URLSearchParams();
+    if(orgEl?.value) q.set('organization_name', orgEl.value.trim());
+    if(storeEl?.value) q.set('store_name', storeEl.value.trim());
+    if(agentEl?.value) q.set('agent_name', agentEl.value.trim());
     q.set('auto_create_products','true');
     q.set('auto_create_agent','true');
-    q.set('price_currency', getCur());
-    if (withPrice){
-      q.set('coef', coef.value || '1.6');
-      if (getCur()==='usd'){
-        if (!usdRate.value) throw new Error('Укажите курс доллара');
-        q.set('usd_rate', usdRate.value);
-        q.set('shipping_per_kg_usd', ship.value || '15');
+
+    const currency=getCur();
+    q.set('price_currency', currency);
+
+    if(withPriceParams){
+      q.set('coef', String(parseFloat(coefEl.value||'1.6')));
+      q.set('shipping_per_kg_usd', String(parseFloat(shipEl.value||'15')));
+      if(currency==='usd'){
+        const rate=parseFloat(usdRateEl.value||'0');
+        if(rate>0) q.set('usd_rate', String(rate));
       }
     }
+    if(weightsJson) q.set('weights_json', weightsJson);
     return q;
   }
 
-  function setLoading(on, msg=''){
-    status.innerHTML = on ? (msg||'Загрузка…') + '<span class="spinner"></span>' : (msg||'');
+  function renderTable(rows){
+    lastRows=rows.slice();
+    weights={};
+    let html=`
+      <div style="overflow:auto">
+      <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Артикул (станет code)</th>
+          <th style="text-align:left;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Наименование</th>
+          <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Кол-во</th>
+          <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Цена (raw)</th>
+          <th style="text-align:center;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Валюта</th>
+          <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Вес, кг</th>
+          <th style="text-align:right;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Цена (KGS)</th>
+          <th style="text-align:center;padding:6px 8px;border-bottom:1px solid #e2e8f0;">Совпадение в ЗП</th>
+        </tr>
+      </thead><tbody>
+    `;
+    rows.forEach((r, i)=>{
+      const code=String(r.article||'').trim();
+      const w = r.weight ?? '';
+      weights[code] = (w===''||w==null)?undefined:Number(w);
+      const pkgs = r.price_kgs==null?'—':`${r.price_kgs} c`;
+      const tag = r.in_po
+        ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:999px;">найден</span>'
+        : '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;">нет</span>';
+      html+=`
+        <tr data-idx="${i}">
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;">${code}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;">${r.name||''}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${r.qty||0}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">${r.price_raw ?? '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:center;">${(r.currency||'').toUpperCase()}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:right;">
+            <input type="number" step="0.001" min="0" value="${w ?? ''}" style="width:100px;padding:6px 8px;border:1px solid #e2e8f0;border-radius:8px;" class="w-input" data-code="${code}">
+          </td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:right;" class="pkgs">${pkgs}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;text-align:center;">${tag}</td>
+        </tr>`;
+    });
+    html+='</tbody></table></div>';
+    outEl.innerHTML=html;
+
+    outEl.querySelectorAll('.w-input').forEach(inp=>{
+      inp.addEventListener('input', e=>{
+        const code=e.target.getAttribute('data-code')||'';
+        const tr=e.target.closest('tr');
+        const idx=Number(tr.getAttribute('data-idx'));
+        const row=lastRows[idx];
+        const val=e.target.value.trim();
+        weights[code]=val===''?undefined:Number(val);
+        const kgs=kgsForRow(row.currency, row.price_raw, weights[code] ?? row.weight ?? 0);
+        tr.querySelector('.pkgs').textContent = (kgs==null||isNaN(kgs)) ? '—' : `${Math.round(kgs)} c`;
+      });
+    });
   }
 
-  function renderPreview(data){
-    results.style.display = '';
-    tHead.innerHTML = `
-      <tr>
-        <th>Артикул (станет <span class="mono">code</span>)</th>
-        <th>Наименование</th>
-        <th>Цена (KGS)</th>
-        <th>Совпадение в ЗП</th>
-      </tr>`;
-    tBody.innerHTML = '';
-    const priceMap = new Map((data.calculated_prices||[]).map(x=>[String(x.article||''), x.price_kgs]));
-    const hits = data.po_hits||[];
-    for (const row of hits){
-      const art = String(row.article||'');
-      const kgs = priceMap.get(art);
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="mono">${art||'—'}</td>
-        <td>${row.name||'—'}</td>
-        <td>${(kgs!=null)? (kgs.toLocaleString('ru-RU')+' с') : '<span class="muted">—</span>'}</td>
-        <td>${row.in_po ? '<span class="chip ok">найден</span>' : '<span class="chip no">нет</span>'}</td>`;
-      tBody.appendChild(tr);
-    }
-    const total = data.rows_total ?? hits.length;
-    const found = hits.filter(x=>x.in_po).length;
-    $('summary').textContent = `Строк: ${total}. Совпадений с заказами поставщику: ${found}.`;
-    // тех. деталь
-    debugBox.style.display = '';
-    debugPre.textContent = JSON.stringify(data, null, 2);
-  }
+  async function callPreview(){
+    outEl.textContent='Загрузка...'; hintEl.textContent='';
+    const f=fileEl?.files?.[0]; if(!f){ outEl.textContent='Выберите файл.'; return; }
 
-  async function callApi(path){
-    const f = fileEl.files?.[0];
-    if (!f){ alert('Выберите файл'); return; }
-    let qs;
-    try{
-      qs = buildQS(true);
-    }catch(e){
-      alert(e.message||String(e)); return;
-    }
-    setLoading(true, path.includes('preview')?'Готовим превью…':'Создаём приёмку…');
-    results.style.display='none';
-    debugBox.style.display='none';
-
-    const form = new FormData();
-    form.append('file', f);
-    const resp = await fetch(`${path}?${qs.toString()}`, {method:'POST', body:form});
-    let data;
-    try{ data = await resp.json(); }catch{ data = {error: await resp.text()} }
-
-    setLoading(false, resp.ok ? 'Готово' : 'Ошибка');
-    if (!resp.ok){
-      alert((data?.detail) || data?.error || 'Ошибка запроса');
-      debugBox.style.display=''; debugPre.textContent = JSON.stringify(data,null,2);
+    // если выбран USD — требуем курс
+    if(getCur()==='usd' && !(parseFloat(usdRateEl.value||'0')>0)){
+      outEl.textContent='Укажите курс USD.';
       return;
     }
-    renderPreview(data);
-    if (path.includes('to-supply')){
-      status.textContent = 'Документ Приёмки создан.';
+
+    const form=new FormData(); form.append('file', f);
+    const q=buildQuery({withPriceParams:true, weightsJson: JSON.stringify(weights)});
+    const resp=await fetch(`/import-invoice-preview/?${q.toString()}`, {method:'POST', body:form});
+    let data; try{ data=await resp.json(); }catch{ data={error:await resp.text()}; }
+
+    if(resp.ok && Array.isArray(data.rows)){
+      renderTable(data.rows);
+      hintEl.textContent=`Строк: ${data.rows_total}. Совпадений в ЗП: ${data.rows.filter(r=>r.in_po).length}.`;
+    }else{
+      outEl.textContent=JSON.stringify(data,null,2);
     }
   }
 
-  $('previewBtn').addEventListener('click', ()=>callApi('/import-invoice-preview/'));
-  $('importBtn').addEventListener('click', ()=>callApi('/import-invoice-to-supply/'));
+  async function callImport(){
+    hintEl.textContent='Отправка...';
+    const f=fileEl?.files?.[0]; if(!f){ hintEl.textContent='Выберите файл.'; return; }
+
+    if(getCur()==='usd' && !(parseFloat(usdRateEl.value||'0')>0)){
+      hintEl.textContent='Укажите курс USD.'; return;
+    }
+
+    const form=new FormData(); form.append('file', f);
+    const q=buildQuery({withPriceParams:true, weightsJson: JSON.stringify(weights)});
+    const resp=await fetch(`/import-invoice-to-supply/?${q.toString()}`, {method:'POST', body:form});
+    let data; try{ data=await resp.json(); }catch{ data={error:await resp.text()}; }
+
+    if(resp.ok){
+      hintEl.textContent='Готово. Документ Приёмки создан.'; 
+      outEl.textContent=JSON.stringify(data,null,2);
+    }else{
+      hintEl.textContent='Ошибка'; 
+      outEl.textContent=JSON.stringify(data,null,2);
+    }
+  }
+
+  document.getElementById('previewBtn')?.addEventListener('click', callPreview);
+  document.getElementById('importBtn')?.addEventListener('click', callImport);
 });
 </script>
 </body>

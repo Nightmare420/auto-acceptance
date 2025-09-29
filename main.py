@@ -1,21 +1,33 @@
 # requirements: fastapi, uvicorn, httpx, pandas, openpyxl, numpy, pydantic, python-multipart, xlrd
 import os
-import re
-import asyncio
+import io
+import csv
+import json
+import math
+import time
 import base64
+import asyncio
+import re
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Iterable, Set
 
+import httpx
 import numpy as np
 import pandas as pd
-import httpx
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
-# --- ENV ---
+# ---------- env & app ----------
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
 MS_LOGIN = os.environ.get("MS_LOGIN")
 MS_PASSWORD = os.environ.get("MS_PASSWORD")
@@ -24,8 +36,15 @@ MANUFACTURER_ATTR_NAME = "Производитель"
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
 
-# --- APP ---
-app = FastAPI(title="Import Supply — MoySklad")
+def ms_headers() -> Dict[str, str]:
+    token = base64.b64encode(f"{MS_LOGIN}:{MS_PASSWORD}".encode()).decode()
+    return {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+        "Accept-Encoding": "gzip",
+    }
+
+app = FastAPI(title="MoySklad Supply Import")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
@@ -36,9 +55,37 @@ app.mount("/ui", StaticFiles(directory=str(BASE_DIR / "static"), html=True), nam
 
 @app.get("/", include_in_schema=False)
 async def root_redirect():
-    return RedirectResponse("/ui/")
+    return RedirectResponse(url="/ui/")
 
-# --- HELPERS ---
+# ---------- utils ----------
+
+_sem = asyncio.Semaphore(6)  # мягкий лимит одновременных сетевых вызовов
+
+async def _request_with_backoff(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    params: Optional[dict] = None,
+    json_: Optional[dict] = None,
+    max_retries: int = 4,
+) -> httpx.Response:
+    """429/5xx — экспоненциальный бэкофф с jitter."""
+    attempt = 0
+    while True:
+        async with _sem:
+            resp = await client.request(method, url, params=params, json=json_)
+        if resp.status_code < 400:
+            return resp
+        # допускаем 401/403 сразу, чтобы было понятно про права
+        if resp.status_code in (401, 403):
+            resp.raise_for_status()
+        if resp.status_code in (408, 409, 412, 425, 429, 500, 502, 503, 504) and attempt < max_retries:
+            wait = (2 ** attempt) * 0.6 + (0.2 * np.random.random())
+            await asyncio.sleep(wait)
+            attempt += 1
+            continue
+        resp.raise_for_status()
 
 def _norm(s: Optional[str]) -> str:
     if s is None:
@@ -47,292 +94,232 @@ def _norm(s: Optional[str]) -> str:
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
-def _norm_code(s: Optional[str]) -> str:
-    return _norm(s).replace(" ", "").upper()
+def _norm_lower(s: Optional[str]) -> str:
+    return _norm(s).casefold()
 
-def ms_headers() -> Dict[str, str]:
-    token = base64.b64encode(f"{MS_LOGIN}:{MS_PASSWORD}".encode()).decode()
-    return {"Authorization": f"Basic {token}", "Content-Type": "application/json", "Accept-Encoding": "gzip"}
-
-def _to_number(x) -> Optional[float]:
+def _to_number(v) -> Optional[float]:
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return None
     try:
-        if x is None:
-            return None
-        if isinstance(x, str):
-            s = x.strip().replace(" ", "").replace(",", ".")
-            if not s:
-                return None
-            v = float(s)
-        else:
-            v = float(x)
-        if np.isnan(v) or np.isinf(v):
-            return None
-        return v
+        return float(str(v).replace(",", "."))
     except Exception:
         return None
 
-async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str, **kw) -> httpx.Response:
-    delay = 0.6
-    for _ in range(6):
-        resp = await client.request(method, url, **kw)
-        if resp.status_code not in (429, 500, 502, 503, 504):
-            return resp
-        await asyncio.sleep(delay)
-        delay *= 1.6
-    return resp
+# ---------- product metadata helpers ----------
 
-async def find_single_meta(client: httpx.AsyncClient, entity: str, *, filter_expr: Optional[str] = None, search: Optional[str] = None):
-    params = {"limit": 1}
-    if filter_expr:
-        params["filter"] = filter_expr
-    if search:
-        params["search"] = search
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/{entity}", params=params)
-    r.raise_for_status()
+async def _fetch_product_attrs(client: httpx.AsyncClient) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    r1 = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata/attributes")
+    rows = r1.json().get("rows") or []
+    out.extend([a for a in rows if isinstance(a, dict)])
+
+    r2 = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata")
+    rows2 = r2.json().get("attributes") or []
+    for a in rows2:
+        if isinstance(a, dict) and not any(x.get("id") == a.get("id") for x in out):
+            out.append(a)
+    return out
+
+async def get_or_create_manufacturer_attr_meta(client: httpx.AsyncClient, auto_create: bool = True) -> Dict[str, Any]:
+    target = _norm_lower(MANUFACTURER_ATTR_NAME)
+    attrs = await _fetch_product_attrs(client)
+    for a in attrs:
+        if _norm_lower(a.get("name")) == target and str(a.get("type", "")).casefold() in ("string", "text"):
+            return a
+
+    if not auto_create:
+        raise HTTPException(400, detail=f"В товарах нет поля '{MANUFACTURER_ATTR_NAME}' (string).")
+
+    r = await _request_with_backoff(
+        client, "POST", f"{MS_API}/entity/product/metadata/attributes",
+        json_={"name": MANUFACTURER_ATTR_NAME, "type": "string"},
+    )
+    return r.json()
+
+async def resolve_uom_meta(client: httpx.AsyncClient, unit_hint: Optional[str]) -> Dict[str, Any]:
+    candidates = []
+    if unit_hint:
+        uh = str(unit_hint).strip()
+        candidates.extend([f"name={uh}", f"code={uh}"])
+    candidates.extend(["name=шт", "code=796"])  # запасные варианты
+    for f in candidates:
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"filter": f, "limit": 1})
+        rows = r.json().get("rows", [])
+        if rows:
+            return {"meta": rows[0]["meta"]}
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
+    rows = r.json().get("rows", [])
+    if rows:
+        return {"meta": rows[0]["meta"]}
+    raise HTTPException(400, detail="Не удалось определить единицу измерения (uom).")
+
+# ---------- product by CODE (article from file -> code in MS) ----------
+
+async def find_product_by_code(client: httpx.AsyncClient, code: str) -> Optional[Dict[str, Any]]:
+    if not code:
+        return None
+    r = await _request_with_backoff(
+        client, "GET", f"{MS_API}/entity/product",
+        params={"filter": f"code={code}", "limit": 1},
+    )
     rows = r.json().get("rows", [])
     return {"meta": rows[0]["meta"]} if rows else None
 
-def meta_from_id(entity: str, _id: str) -> Dict[str, Any]:
-    return {"meta": {"href": f"{MS_API}/entity/{entity}/{_id}", "type": entity, "mediaType": "application/json"}}
+async def create_product_with_code(
+    client: httpx.AsyncClient, *, name: str, code: str, manufacturer: Optional[str], unit_hint: Optional[str]
+) -> Dict[str, Any]:
+    uom_meta = await resolve_uom_meta(client, unit_hint)
+    payload: Dict[str, Any] = {
+        "name": name or code or "Товар",
+        "uom": uom_meta,
+        "code": str(code),
+    }
+    if manufacturer:
+        attr = await get_or_create_manufacturer_attr_meta(client, auto_create=True)
+        attr_meta = attr.get("meta") or {}
+        payload["attributes"] = [{
+            "meta": {
+                "href": attr_meta.get("href"),
+                "type": attr_meta.get("type", "attributemetadata"),
+                "mediaType": attr_meta.get("mediaType", "application/json"),
+            },
+            "value": str(manufacturer),
+        }]
 
-async def resolve_refs(
-    client: httpx.AsyncClient, *, organization_name: Optional[str], store_name: Optional[str],
-    agent_name: Optional[str], organization_id: Optional[str], store_id: Optional[str], agent_id: Optional[str],
-    auto_create_agent: bool = True
-) -> Tuple[Dict[str, Dict[str, Any]], bool]:
-    refs: Dict[str, Dict[str, Any]] = {}
-    created_agent = False
+    r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json_=payload)
+    return {"meta": r.json()["meta"]}
 
-    # organization
-    if organization_id:
-        refs["organization"] = meta_from_id("organization", organization_id)
-    elif organization_name:
-        refs["organization"] = await find_single_meta(client, "organization", filter_expr=f"name={organization_name}") \
-                             or await find_single_meta(client, "organization", search=organization_name)
-    if not refs.get("organization"):
-        raise HTTPException(400, detail="Не найдена организация (organization). Укажите имя или ID.")
+async def resolve_product_by_code_or_create(
+    client: httpx.AsyncClient,
+    *,
+    code: str,
+    name: Optional[str],
+    manufacturer: Optional[str],
+    unit_hint: Optional[str],
+    auto_create: bool
+) -> Tuple[Optional[Dict[str, Any]], bool]:
+    found = await find_product_by_code(client, code)
+    if found:
+        return found, False
+    if not auto_create:
+        return None, False
+    meta = await create_product_with_code(
+        client, name=name or code, code=code, manufacturer=manufacturer, unit_hint=unit_hint
+    )
+    return meta, True
 
-    # store
-    if store_id:
-        refs["store"] = meta_from_id("store", store_id)
-    elif store_name:
-        refs["store"] = await find_single_meta(client, "store", filter_expr=f"name={store_name}") \
-                     or await find_single_meta(client, "store", search=store_name)
-    if not refs.get("store"):
-        raise HTTPException(400, detail="Не найден склад (store). Укажите имя или ID.")
+# ---------- purchase orders scan (codes) ----------
 
-    # agent (может быть пуст для режима «все ЗП»)
-    if agent_id:
-        refs["agent"] = meta_from_id("counterparty", agent_id)
-    elif agent_name:
-        agent = await find_single_meta(client, "counterparty", filter_expr=f"name={agent_name}") \
-              or await find_single_meta(client, "counterparty", search=agent_name)
-        if not agent and auto_create_agent and agent_name.strip():
-            r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/counterparty", json={"name": agent_name})
-            if r.status_code in (409, 412):
-                agent = await find_single_meta(client, "counterparty", filter_expr=f"name={agent_name}") \
-                      or await find_single_meta(client, "counterparty", search=agent_name)
-            else:
-                r.raise_for_status()
-                agent = {"meta": r.json()["meta"]}
-            created_agent = True
-        if not agent:
-            raise HTTPException(400, detail="Не найден контрагент (agent).")
-        refs["agent"] = agent
+async def fetch_po_codes_recent(client: httpx.AsyncClient, days_back: int = 60) -> Set[str]:
+    """Сканируем ЗП за последние N дней, собираем product.code всех позиций."""
+    codes: Set[str] = set()
+    # Режем по страницам. Фильтр по дате (moment>=) упрощает объём.
+    since = time.strftime("%Y-%m-%d", time.gmtime(time.time() - days_back * 86400))
+    base = f"{MS_API}/entity/purchaseorder"
+    params = {"limit": 100, "expand": "positions.assortment", "filter": f"moment>={since}"}
+    offset = 0
+    while True:
+        r = await _request_with_backoff(client, "GET", base, params={**params, "offset": offset})
+        data = r.json()
+        rows = data.get("rows") or []
+        if not rows:
+            break
+        for po in rows:
+            pos = (po.get("positions") or {}).get("rows") or []
+            for p in pos:
+                assort = p.get("assortment") or {}
+                code = assort.get("code")
+                if code:
+                    codes.add(str(code).strip())
+        offset += data.get("meta", {}).get("limit", 100)
+        if offset >= data.get("meta", {}).get("size", 0):
+            break
+    return codes
 
-    return refs, created_agent
+# ---------- Excel/CSV parsing ----------
 
-# --- Excel parsing ---
+def _read_table_from_upload(file: UploadFile) -> pd.DataFrame:
+    name = file.filename or ""
+    ext = Path(name).suffix.lower()
+    if ext == ".csv":
+        # читаем CSV в pandas, но сначала в память (FastAPI UploadFile — поток)
+        raw = file.file.read()
+        df = pd.read_csv(io.BytesIO(raw))
+        return df
+    # Excel
+    engine = "openpyxl" if ext == ".xlsx" else "xlrd"
+    return pd.read_excel(file.file, sheet_name=0, engine=engine)
 
-def parse_invoice_like_excel(fobj, filename: str) -> pd.DataFrame:
-    ext = Path(filename).suffix.lower()
-    engine = "openpyxl" if ext == ".xlsx" else ("xlrd" if ext == ".xls" else None)
-    if engine is None:
-        raise HTTPException(400, "Разрешены только .xlsx/.xls")
-
-    raw = pd.read_excel(fobj, sheet_name=0, engine=engine)
-
+def parse_invoice_like_table(df: pd.DataFrame) -> pd.DataFrame:
+    # Определяем строку заголовка по признакам
     header_row_idx = None
-    for i, row in raw.iterrows():
+    for i, row in df.iterrows():
         vals = row.astype(str).tolist()
         if any("Артикул" in str(v) for v in vals) and any("Цена" in str(v) for v in vals):
             header_row_idx = i
             break
     if header_row_idx is None:
-        raise HTTPException(400, detail="Не удалось найти строку заголовков (нужны колонки 'Артикул' и 'Цена').")
+        raise HTTPException(400, detail="Не удалось найти строку заголовков (Артикул/Цена).")
 
-    header_row = raw.iloc[header_row_idx]
+    header_row = df.iloc[header_row_idx]
     name2col = {str(v).strip(): c for c, v in header_row.items() if pd.notna(v)}
 
-    col_article = name2col.get("Артикул")
-    col_name    = name2col.get("Товары (работы, услуги)") or name2col.get("Наименование") or name2col.get("Название")
-    col_qty     = name2col.get("Кол.") or name2col.get("Кол-во") or name2col.get("Колич.") or name2col.get("Количество")
-    col_unit    = name2col.get("Ед.") or name2col.get("Ед") or name2col.get("Ед.изм")
-    col_price   = name2col.get("Цена")
-    col_weight  = name2col.get("Вес") or name2col.get("Масса")
-    col_cur     = name2col.get("Валюта")
+    col_code = name2col.get("Артикул") or name2col.get("Код") or name2col.get("Article") or name2col.get("Code")
+    col_name = name2col.get("Товары (работы, услуги)") or name2col.get("Наименование") or name2col.get("Name")
+    col_qty  = name2col.get("Кол.") or name2col.get("Кол-во") or name2col.get("Колич.") or name2col.get("Qty")
+    col_unit = name2col.get("Ед.") or name2col.get("Ед") or name2col.get("Unit")
+    col_price = name2col.get("Цена") or name2col.get("Price")
+    col_sum = name2col.get("Сумма")
+    col_mnf = name2col.get("Производитель") or name2col.get("Бренд") or name2col.get("Brand")
+    col_currency = name2col.get("Валюта") or name2col.get("Currency")
+    col_weight = name2col.get("Вес") or name2col.get("Weight")
 
-    data = raw.iloc[header_row_idx + 1:].copy()
-
-    stop_idx = None
-    for i, row in data.iterrows():
-        if col_name in data.columns:
-            name_v = row[col_name]
-            if isinstance(name_v, str) and name_v and name_v.strip().upper().startswith("ИТОГО"):
-                stop_idx = i
-                break
-        if col_article in data.columns and pd.isna(row.get(col_article)) and (col_name in data.columns) and pd.isna(row.get(col_name)):
-            stop_idx = i
-            break
-    if stop_idx is not None:
-        data = data.loc[:stop_idx - 1]
+    data = df.iloc[header_row_idx + 1:].copy()
 
     parsed = pd.DataFrame({
-        "article": data[col_article] if col_article in data.columns else None,
-        "name":    data[col_name]    if col_name    in data.columns else None,
-        "qty":     data[col_qty]     if col_qty     in data.columns else 1,
-        "unit":    data[col_unit]    if col_unit    in data.columns else None,
-        "price":   data[col_price]   if col_price   in data.columns else None,
-        "weight":  data[col_weight]  if col_weight  in data.columns else 0,
-        "currency":data[col_cur]     if col_cur     in data.columns else None,
+        "article": data[col_code] if col_code in data.columns else None,
+        "name":    data[col_name] if col_name in data.columns else None,
+        "qty":     data[col_qty] if col_qty in data.columns else 1,
+        "unit":    data[col_unit] if col_unit in data.columns else None,
+        "price":   data[col_price] if col_price in data.columns else None,
+        "sum":     data[col_sum] if col_sum in data.columns else None,
+        "manufacturer": data[col_mnf] if col_mnf in data.columns else None,
+        "currency": data[col_currency] if col_currency in data.columns else None,
+        "weight":  data[col_weight] if col_weight in data.columns else None,
     })
 
-    for c in ("article", "name", "unit", "currency"):
+    for c in ("article", "name", "currency", "manufacturer", "unit"):
         parsed[c] = parsed[c].astype(str).str.strip().replace({"nan": None, "": None})
     parsed["qty"] = pd.to_numeric(parsed["qty"], errors="coerce").fillna(0)
+    parsed["price"] = pd.to_numeric(parsed["price"], errors="coerce")
+    parsed["weight"] = pd.to_numeric(parsed["weight"], errors="coerce")
+    parsed = parsed[(parsed["qty"] > 0) & (parsed["article"].notna())]
+    return parsed.reset_index(drop=True)
 
-    parsed = parsed[(parsed["qty"] > 0) & (parsed["article"].notna())].reset_index(drop=True)
-    return parsed
+# ---------- price calculation ----------
 
-# --- MS: products & purchase orders ---
-
-async def find_product_by_code(client: httpx.AsyncClient, *, code: str) -> Optional[Dict[str, Any]]:
-    if not code:
+def price_kgs_for_row(currency: str,
+                      price: Optional[float],
+                      weight: Optional[float],
+                      coef: float,
+                      usd_rate: Optional[float],
+                      shipping_per_kg_usd: float) -> Optional[float]:
+    """
+    USD: (price*coef + weight*shipping_per_kg_usd) * usd_rate
+    KGS: price*coef
+    """
+    if price is None:
         return None
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product", params={"filter": f"code={code}", "limit": 1})
-    r.raise_for_status()
-    rows = r.json().get("rows", [])
-    return {"meta": rows[0]["meta"]} if rows else None
+    cur = (currency or "usd").strip().lower()
+    w = float(weight or 0)
+    if cur == "usd":
+        if usd_rate is None:
+            return None
+        return (float(price) * float(coef) + w * float(shipping_per_kg_usd)) * float(usd_rate)
+    else:
+        return float(price) * float(coef)
 
-async def create_product_with_code(
-    client: httpx.AsyncClient, *, code: str, name: Optional[str], unit_hint: Optional[str], manufacturer: Optional[str]
-) -> Dict[str, Any]:
-    # uom
-    uom = None
-    for f in [f"name=шт", "code=796"]:
-        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"filter": f, "limit": 1})
-        r.raise_for_status()
-        rows = r.json().get("rows", [])
-        if rows:
-            uom = {"meta": rows[0]["meta"]}
-            break
-    payload = {"name": name or code, "code": code}
-    if uom:
-        payload["uom"] = uom
-
-    # мягко проставим производитель, если атрибут доступен
-    if manufacturer:
-        meta_attr = None
-        r1 = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata/attributes")
-        if r1.status_code == 200:
-            for a in (r1.json().get("rows") or []):
-                if str(a.get("name","")).strip().casefold() == MANUFACTURER_ATTR_NAME.casefold():
-                    meta_attr = a.get("meta"); break
-        if not meta_attr:
-            r2 = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata")
-            if r2.status_code == 200:
-                for a in (r2.json().get("attributes") or []):
-                    if str(a.get("name","")).strip().casefold() == MANUFACTURER_ATTR_NAME.casefold():
-                        meta_attr = a.get("meta"); break
-        if meta_attr:
-            payload["attributes"] = [{
-                "meta": {"href": meta_attr.get("href"), "type": meta_attr.get("type", "attributemetadata"), "mediaType": "application/json"},
-                "value": manufacturer
-            }]
-
-    r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload)
-    if r.status_code in (401, 403):
-        raise HTTPException(r.status_code, detail="Нет доступа к API МойСклад (товар)")
-    r.raise_for_status()
-    return {"meta": r.json()["meta"]}
-
-async def resolve_product_by_code_or_create(
-    client: httpx.AsyncClient, *, code: str, name: Optional[str], unit_hint: Optional[str], manufacturer: Optional[str], auto_create: bool
-) -> Tuple[Optional[Dict[str, Any]], bool]:
-    found = await find_product_by_code(client, code=code)
-    if found:
-        return found, False
-    if not auto_create:
-        return None, False
-    return await create_product_with_code(client, code=code, name=name, unit_hint=unit_hint, manufacturer=manufacturer), True
-
-async def fetch_purchase_orders_codes_for_agent(client: httpx.AsyncClient, agent_meta: Dict[str, Any], limit_docs: int = 30) -> set:
-    codes: set = set()
-    agent_href = agent_meta["meta"]["href"]
-    r = await _request_with_backoff(
-        client, "GET", f"{MS_API}/entity/purchaseorder",
-        params={"filter": f"agent={agent_href}", "order": "updated,desc", "limit": limit_docs}
-    )
-    r.raise_for_status()
-    rows = r.json().get("rows", [])
-    for po in rows:
-        pos_meta = po.get("positions", {}).get("meta", {})
-        href = pos_meta.get("href")
-        if not href:
-            continue
-        rr = await _request_with_backoff(client, "GET", href, params={"expand": "assortment", "limit": 1000})
-        if rr.status_code == 403:
-            continue
-        rr.raise_for_status()
-        for p in rr.json().get("rows", []):
-            assort = p.get("assortment") or {}
-            if assort.get("meta", {}).get("type") == "product":
-                pr = assort
-                code = pr.get("code")
-                if not code:
-                    href_pr = pr.get("meta", {}).get("href")
-                    if href_pr:
-                        r_pr = await _request_with_backoff(client, "GET", href_pr)
-                        if r_pr.status_code == 200:
-                            code = r_pr.json().get("code")
-                if code:
-                    codes.add(_norm_code(code))
-    return codes
-
-async def fetch_purchase_orders_codes_any(client: httpx.AsyncClient, limit_docs: int = 40) -> set:
-    """Последние Z заказов поставщику по всем контрагентам → множество product.code."""
-    codes: set = set()
-    r = await _request_with_backoff(
-        client, "GET", f"{MS_API}/entity/purchaseorder",
-        params={"order": "updated,desc", "limit": limit_docs}
-    )
-    r.raise_for_status()
-    orders = r.json().get("rows", [])
-    for po in orders:
-        pos_meta = po.get("positions", {}).get("meta", {})
-        href = pos_meta.get("href")
-        if not href:
-            continue
-        rr = await _request_with_backoff(client, "GET", href, params={"expand": "assortment", "limit": 1000})
-        if rr.status_code == 403:
-            continue
-        rr.raise_for_status()
-        for p in rr.json().get("rows", []):
-            assort = p.get("assortment") or {}
-            if assort.get("meta", {}).get("type") == "product":
-                pr = assort
-                code = pr.get("code")
-                if not code:
-                    href_pr = pr.get("meta", {}).get("href")
-                    if href_pr:
-                        r_pr = await _request_with_backoff(client, "GET", href_pr)
-                        if r_pr.status_code == 200:
-                            code = r_pr.json().get("code")
-                if code:
-                    codes.add(_norm_code(code))
-    return codes
-
-# --- SCHEMAS ---
+# ---------- models ----------
 
 class SupplyCreateResponse(BaseModel):
     created_positions: int
@@ -342,79 +329,105 @@ class SupplyCreateResponse(BaseModel):
     will_create: List[Dict[str, Any]] = []
     will_use_existing: List[Dict[str, Any]] = []
     supply_meta: Dict[str, Any]
-    po_hits: List[Dict[str, Any]] = []
-    calculated_prices: List[Dict[str, Any]] = []
+    po_scan_note: Optional[str] = None
 
-# --- ENDPOINTS ---
+# ---------- endpoints ----------
+
+@app.get("/ms-product-attrs")
+async def ms_product_attrs():
+    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
+        both = await _fetch_product_attrs(client)
+        return [
+            {"id": a.get("id"), "name": a.get("name"), "type": a.get("type"), "href": (a.get("meta") or {}).get("href")}
+            for a in both if isinstance(a, dict)
+        ]
 
 @app.post("/import-invoice-preview/")
 async def import_invoice_preview(
     file: UploadFile = File(...),
     organization_name: Optional[str] = None,
     store_name: Optional[str] = None,
-    agent_name: Optional[str] = Query(None, description="Контрагент для сверки с ЗП (необязательно)"),
+    agent_name: Optional[str] = None,
     organization_id: Optional[str] = None,
     store_id: Optional[str] = None,
     agent_id: Optional[str] = None,
     auto_create_products: bool = True,
     auto_create_agent: bool = True,
-    price_currency: str = Query("usd", description="usd|kgs (колонка 'Валюта' в файле приоритетнее)"),
+    price_currency: str = "usd",
     coef: float = 1.6,
     usd_rate: Optional[float] = None,
     shipping_per_kg_usd: float = 15.0,
+    weights_json: Optional[str] = None,
 ):
-    parsed = parse_invoice_like_excel(file.file, file.filename)
+    # 1) читаем таблицу
+    try:
+        df = _read_table_from_upload(file)
+    finally:
+        try:
+            file.file.seek(0)
+        except Exception:
+            pass
+    parsed = parse_invoice_like_table(df)
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
 
-    # расчёт цен для превью
-    calculated_prices: List[Dict[str, Any]] = []
-    for rec in parsed.to_dict(orient="records"):
-        cur = (str(rec.get("currency") or price_currency or "usd")).lower()
-        price = _to_number(rec.get("price"))
-        w = _to_number(rec.get("weight")) or 0.0
-        if price is None:
-            continue
-        if cur == "usd":
-            if usd_rate is None:
-                continue
-            kgs = (price * float(coef) + w * float(shipping_per_kg_usd)) * float(usd_rate)
-        else:
-            kgs = price * float(coef)
-        vkgs = _to_number(kgs)
-        if vkgs is not None:
-            calculated_prices.append({"article": _norm(rec.get("article")), "price_kgs": int(round(vkgs))})
-
-    # сверка с ЗП (агент → только его ЗП; иначе → все последние ЗП)
-    po_hits: List[Dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        refs, _ = await resolve_refs(
-            client,
-            organization_name=organization_name, store_name=store_name,
-            agent_name=agent_name, organization_id=organization_id,
-            store_id=store_id, agent_id=agent_id, auto_create_agent=auto_create_agent,
-        )
+    # 2) разбираем веса с фронта
+    weights_override: Dict[str, float] = {}
+    if weights_json:
         try:
-            if refs.get("agent"):
-                po_codes = await fetch_purchase_orders_codes_for_agent(client, refs["agent"])
-            else:
-                po_codes = await fetch_purchase_orders_codes_any(client, limit_docs=40)
-        except httpx.HTTPStatusError:
-            po_codes = set()
+            obj = json.loads(weights_json)
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if v in (None, ""):
+                        continue
+                    try:
+                        weights_override[str(k).strip()] = float(v)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
+    # 3) сканируем ЗП — собираем коды (code) из заказов поставщику
+    po_codes: Optional[Set[str]] = None
+    po_note: Optional[str] = None
+    try:
+        async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
+            po_codes = await fetch_po_codes_recent(client, days_back=60)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code in (401, 403):
+            po_note = "Нет прав на просмотр заказов поставщику — сверка отключена."
+        else:
+            po_note = f"Сверка ЗП недоступна ({e.response.status_code})."
+    except Exception:
+        po_note = "Сверка заказов временно недоступна."
+
+    # 4) формируем строки превью
+    rows_out: List[Dict[str, Any]] = []
     for rec in parsed.to_dict(orient="records"):
-        art = _norm_code(rec.get("article"))
-        po_hits.append({
-            "article": _norm(rec.get("article")),
+        code = str(rec.get("article") or "").strip()  # станет product.code
+        cur_v = (rec.get("currency") or price_currency or "usd")
+        price_v = _to_number(rec.get("price"))
+        file_weight = _to_number(rec.get("weight"))
+        weight_v = weights_override.get(code, file_weight)
+        kgs = price_kgs_for_row(str(cur_v), price_v, weight_v, coef, usd_rate, shipping_per_kg_usd)
+        in_po = None if po_codes is None else (code in po_codes)
+
+        rows_out.append({
+            "article": code,
             "name": _norm(rec.get("name")),
-            "in_po": (art in po_codes) if po_codes else False
+            "qty": _to_number(rec.get("qty")) or 0.0,
+            "unit": _norm(rec.get("unit")),
+            "currency": str(cur_v).lower(),
+            "price_raw": price_v,
+            "weight": weight_v,
+            "price_kgs": int(round(kgs)) if kgs is not None else None,
+            "in_po": in_po,
         })
 
     return {
-        "rows_total": len(parsed),
-        "calculated_prices": calculated_prices,
-        "po_hits": po_hits,
-        "note": "Сверка по product.code. Если поставщик не указан — берём последние заказы поставщику по всем контрагентам."
+        "rows_total": len(rows_out),
+        "rows": rows_out,
+        "po_scan_note": po_note,
     }
 
 @app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
@@ -437,44 +450,100 @@ async def import_invoice_to_supply(
     coef: float = 1.6,
     usd_rate: Optional[float] = None,
     shipping_per_kg_usd: float = 15.0,
+    weights_json: Optional[str] = None,
 ):
-    parsed = parse_invoice_like_excel(file.file, file.filename)
+    # 1) читаем таблицу
+    try:
+        df = _read_table_from_upload(file)
+    finally:
+        try:
+            file.file.seek(0)
+        except Exception:
+            pass
+    parsed = parse_invoice_like_table(df)
     if parsed.empty:
         raise HTTPException(400, detail="Не обнаружены строки с товарами.")
+
+    # 2) разбираем веса с фронта
+    weights_override: Dict[str, float] = {}
+    if weights_json:
+        try:
+            obj = json.loads(weights_json)
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if v in (None, ""):
+                        continue
+                    try:
+                        weights_override[str(k).strip()] = float(v)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     created_products: List[str] = []
     will_create: List[Dict[str, Any]] = []
     will_use_existing: List[Dict[str, Any]] = []
     not_found: List[str] = []
     positions: List[Dict[str, Any]] = []
-    po_hits: List[Dict[str, Any]] = []
-    calculated_prices: List[Dict[str, Any]] = []
 
-    async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        refs, created_agent = await resolve_refs(
-            client,
-            organization_name=organization_name, store_name=store_name,
-            agent_name=agent_name, organization_id=organization_id,
-            store_id=store_id, agent_id=agent_id, auto_create_agent=auto_create_agent,
-        )
+    # 3) ссылки organization/store/agent
+    async with httpx.AsyncClient(timeout=90.0, headers=ms_headers()) as client:
+        # organization
+        if organization_id:
+            org_meta = {"meta": {"href": f"{MS_API}/entity/organization/{organization_id}", "type": "organization", "mediaType": "application/json"}}
+        else:
+            r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/organization", params={"search": organization_name, "limit": 1})
+            rows = r.json().get("rows", [])
+            if not rows:
+                raise HTTPException(400, detail="Не найдена организация.")
+            org_meta = {"meta": rows[0]["meta"]}
 
-        try:
-            if refs.get("agent"):
-                po_codes = await fetch_purchase_orders_codes_for_agent(client, refs["agent"])
+        # store
+        if store_id:
+            store_meta = {"meta": {"href": f"{MS_API}/entity/store/{store_id}", "type": "store", "mediaType": "application/json"}}
+        else:
+            r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/store", params={"search": store_name, "limit": 1})
+            rows = r.json().get("rows", [])
+            if not rows:
+                raise HTTPException(400, detail="Не найден склад.")
+            store_meta = {"meta": rows[0]["meta"]}
+
+        # agent (контрагент)
+        created_agent = False
+        if agent_id:
+            agent_meta = {"meta": {"href": f"{MS_API}/entity/counterparty/{agent_id}", "type": "counterparty", "mediaType": "application/json"}}
+        else:
+            r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty", params={"search": agent_name, "limit": 1})
+            rows = r.json().get("rows", [])
+            if not rows and auto_create_agent and agent_name:
+                r2 = await _request_with_backoff(client, "POST", f"{MS_API}/entity/counterparty", json_={"name": agent_name})
+                agent_meta = {"meta": r2.json()["meta"]}
+                created_agent = True
+            elif rows:
+                agent_meta = {"meta": rows[0]["meta"]}
             else:
-                po_codes = await fetch_purchase_orders_codes_any(client, limit_docs=40)
-        except httpx.HTTPStatusError:
-            po_codes = set()
+                raise HTTPException(400, detail="Не найден контрагент. Укажите имя/ID или разрешите авто-создание.")
 
+        # 4) подготовка позиций
         for rec in parsed.to_dict(orient="records"):
-            code = _norm_code(rec.get("article"))
-            name_row = _norm(rec.get("name")) or code
+            code = str(rec.get("article") or "").strip()
+            name_row = rec.get("name") or code
+            manufacturer = rec.get("manufacturer")
             unit_hint = rec.get("unit")
-            manufacturer = None
+            qty = float(_to_number(rec.get("qty")) or 0)
+            price_raw = _to_number(rec.get("price"))
+            # валюта на уровне строки приоритетнее общего переключателя
+            cur = (rec.get("currency") or price_currency or "usd")
+            file_weight = _to_number(rec.get("weight"))
+            weight = weights_override.get(code, file_weight)
 
             meta, created_new = await resolve_product_by_code_or_create(
-                client, code=code, name=name_row, unit_hint=unit_hint,
-                manufacturer=manufacturer, auto_create=auto_create_products,
+                client,
+                code=code,
+                name=name_row,
+                manufacturer=manufacturer,
+                unit_hint=unit_hint,
+                auto_create=auto_create_products,
             )
             if not meta:
                 not_found.append(code)
@@ -482,37 +551,18 @@ async def import_invoice_to_supply(
 
             if created_new:
                 created_products.append(code)
-                will_create.append({"code": code, "name": name_row})
+                will_create.append({"code": code, "manufacturer": manufacturer, "name": name_row})
             else:
-                prod_id = meta["meta"]["href"].rstrip("/").split("/")[-1]
-                will_use_existing.append({"code": code, "name": name_row, "product_id": prod_id})
+                product_id = meta["meta"]["href"].rstrip("/").split("/")[-1]
+                will_use_existing.append({"code": code, "manufacturer": manufacturer, "name": name_row, "product_id": product_id})
 
-            qty = float(rec.get("qty") or 0)
+            kgs = price_kgs_for_row(str(cur), price_raw, weight, coef, usd_rate, shipping_per_kg_usd)
+
             pos = {"assortment": meta, "quantity": qty}
-
-            cur = (str(rec.get("currency") or price_currency or "usd")).lower()
-            price = _to_number(rec.get("price"))
-            weight = _to_number(rec.get("weight")) or 0.0
-
-            if price is not None:
-                if cur == "usd":
-                    if usd_rate is not None:
-                        kgs = (price * float(coef) + weight * float(shipping_per_kg_usd)) * float(usd_rate)
-                        vkgs = _to_number(kgs)
-                        if vkgs is not None:
-                            pos["price"] = int(round(vkgs * 100))
-                            calculated_prices.append({"article": _norm(rec.get("article")), "price_kgs": int(round(vkgs))})
-                else:
-                    kgs = price * float(coef)
-                    vkgs = _to_number(kgs)
-                    if vkgs is not None:
-                        pos["price"] = int(round(vkgs * 100))
-                        calculated_prices.append({"article": _norm(rec.get("article")), "price_kgs": int(round(vkgs))})
+            if kgs is not None:
+                pos["price"] = int(round(float(kgs) * 100))  # копейки
 
             positions.append(pos)
-
-            in_po = code in po_codes if po_codes else False
-            po_hits.append({"article": _norm(rec.get("article")), "name": name_row, "in_po": in_po})
 
         if not positions:
             raise HTTPException(400, detail=f"Ни одной позиции не сопоставлено/создано. Проблемные коды: {not_found[:20]}")
@@ -523,28 +573,26 @@ async def import_invoice_to_supply(
                 not_found_items=not_found,
                 created_products=created_products,
                 created_agent=created_agent,
-                will_create=will_create, will_use_existing=will_use_existing,
+                will_create=will_create,
+                will_use_existing=will_use_existing,
                 supply_meta={"dryRun": True},
-                po_hits=po_hits,
-                calculated_prices=calculated_prices,
             )
 
         payload: Dict[str, Any] = {
             "applicable": True,
             "vatEnabled": bool(vat_enabled),
             "vatIncluded": bool(vat_included),
-            **refs,
+            "organization": org_meta,
+            "store": store_meta,
+            "agent": agent_meta,
             "positions": positions,
         }
-        if name and name.strip():
-            payload["name"] = name.strip()
-        if moment and moment.strip():
-            payload["moment"] = moment.strip()
+        if name is not None and str(name).strip():
+            payload["name"] = str(name).strip()
+        if moment is not None and str(moment).strip():
+            payload["moment"] = str(moment).strip()
 
-        r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/supply", json=payload)
-        if r.status_code in (401, 403):
-            raise HTTPException(r.status_code, detail="Нет доступа к API МойСклад (проверьте логин/пароль/права)")
-        r.raise_for_status()
+        r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/supply", json_=payload)
         supply = r.json()
 
     return SupplyCreateResponse(
@@ -555,6 +603,4 @@ async def import_invoice_to_supply(
         will_create=will_create,
         will_use_existing=will_use_existing,
         supply_meta=supply["meta"],
-        po_hits=po_hits,
-        calculated_prices=calculated_prices,
     )
