@@ -89,61 +89,62 @@
   </div>
 </div>
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+(function () {
   const $ = (id) => document.getElementById(id);
-
+  const outEl   = $('out');
+  const hintEl  = $('hint');
+  const fileEl  = $('file');
   const orgEl   = $('org');
   const storeEl = $('store');
   const agentEl = $('agent');
   const usdRateEl = $('usdRate');
   const coefEl    = $('coef');
   const shipEl    = $('ship');
-  const fileEl    = $('file');
-
-  const outEl  = document.getElementById('out');
-  const hintEl = document.getElementById('hint');
-
-  const previewBtn = document.getElementById('previewBtn');
-  const importBtn  = document.getElementById('importBtn');
+  const previewBtn = $('previewBtn');
+  const importBtn  = $('importBtn');
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
+
+  function safeText(el, text) { if (el) el.textContent = text; }
+  function appendLog(msg) { if (outEl) outEl.textContent += `\n${msg}`; }
   function getCur() {
     for (const r of curRadios) if (r.checked) return r.value;
     return 'usd';
   }
+
+  function setLoading(is, btn) {
+    if (btn) {
+      if (is) {
+        btn.dataset.text = btn.textContent;
+        btn.textContent = 'Загрузка…';
+        btn.disabled = true;
+      } else {
+        btn.textContent = btn.dataset.text || btn.textContent;
+        btn.disabled = false;
+      }
+    }
+    if (previewBtn && btn !== previewBtn) previewBtn.disabled = !!is;
+    if (importBtn && btn !== importBtn) importBtn.disabled = !!is;
+    if (is) {
+      safeText(outEl, '⏳ Выполняем запрос…');
+      safeText(hintEl, '');
+    }
+  }
+
   function toggleUsd() {
     const isUsd = getCur() === 'usd';
-    usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
-    shipEl.closest('div').style.display    = isUsd ? '' : 'none';
+    try { usdRateEl && usdRateEl.closest('div') && (usdRateEl.closest('div').style.display = isUsd ? '' : 'none'); } catch {}
+    try { shipEl    && shipEl.closest('div')    && (shipEl.closest('div').style.display    = isUsd ? '' : 'none'); } catch {}
   }
   curRadios.forEach(r => r.addEventListener('change', toggleUsd));
   toggleUsd();
 
-  function setLoading(isLoading, btn) {
-    if (!outEl || !hintEl) return;
-    if (isLoading) {
-      btn?.setAttribute('data-text', btn.textContent);
-      btn.textContent = 'Загрузка…';
-      btn.disabled = true;
-      previewBtn && (previewBtn.disabled = true);
-      importBtn && (importBtn.disabled = true);
-      outEl.textContent = '⏳ Выполняем запрос…';
-      hintEl.textContent = '';
-    } else {
-      if (btn?.getAttribute('data-text')) {
-        btn.textContent = btn.getAttribute('data-text');
-        btn.removeAttribute('data-text');
-      }
-      previewBtn && (previewBtn.disabled = false);
-      importBtn && (importBtn.disabled = false);
-    }
-  }
-
   function buildQuery({withPriceParams}) {
     const q = new URLSearchParams();
     if (orgEl?.value)   q.set('organization_name', orgEl.value.trim());
-    if (storeEl?.value) q.set('store_name', storeEl.value.trim());
-    if (agentEl?.value) q.set('agent_name', agentEl.value.trim());
+    if (storeEl?.value) q.set('store_name',        storeEl.value.trim());
+    if (agentEl?.value) q.set('agent_name',        agentEl.value.trim());
+
     q.set('auto_create_products', 'true');
     q.set('auto_create_agent', 'true');
 
@@ -164,47 +165,71 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function callApi(path, btn, withPriceParams) {
-    const f = fileEl?.files?.[0];
-    if (!f) { outEl.textContent = 'Выберите файл.'; return; }
-
-    let q;
     try {
-      q = buildQuery({withPriceParams});
-    } catch (e) {
-      outEl.textContent = e?.message || String(e);
-      return;
-    }
+      console.log('click ->', path);
+      const f = fileEl?.files?.[0];
+      if (!f) {
+        safeText(outEl, 'Выберите файл.');
+        return;
+      }
 
-    const form = new FormData();
-    form.append('file', f);
+      let q;
+      try { q = buildQuery({withPriceParams}); }
+      catch (e) { safeText(outEl, e?.message || String(e)); return; }
 
-    setLoading(true, btn);
-    try {
-      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
-      let data;
-      try { data = await resp.json(); } catch { data = { error: await resp.text() }; }
-      if (resp.ok) {
-        if (data.po_scan_note) {
-          hintEl.textContent = data.po_scan_note;
-        } else if (path.includes('import-invoice-to-supply')) {
-          hintEl.textContent = '✅ Документ Приёмки создан.';
-        } else {
-          hintEl.textContent = '';
+      const form = new FormData();
+      form.append('file', f);
+
+      setLoading(true, btn);
+      const url = `${path}?${q.toString()}`;
+      console.log('fetch:', url);
+      const resp = await fetch(url, { method: 'POST', body: form });
+
+      const ct = resp.headers.get('content-type') || '';
+      let data = null, text = null;
+
+      if (ct.includes('application/json')) {
+        try {
+          data = await resp.json();
+        } catch (e) {
+          console.warn('json parse fail', e);
+          text = await resp.text();
         }
       } else {
-        hintEl.textContent = `Ошибка ${resp.status}`;
+        text = await resp.text();
       }
-      outEl.textContent = JSON.stringify(data, null, 2);
+
+      console.log('status:', resp.status, 'ok:', resp.ok);
+      if (data) {
+        if (resp.ok) {
+          if (data.po_scan_note) safeText(hintEl, data.po_scan_note);
+          else if (path.includes('import-invoice-to-supply')) safeText(hintEl, '✅ Документ Приёмки создан.');
+          else safeText(hintEl, '');
+        } else {
+          safeText(hintEl, `Ошибка ${resp.status}`);
+        }
+        safeText(outEl, JSON.stringify(data, null, 2));
+      } else {
+        safeText(outEl, text ?? '(пустой ответ)');
+        if (!resp.ok) safeText(hintEl, `Ошибка ${resp.status}`);
+      }
     } catch (err) {
-      outEl.textContent = 'Сетевая ошибка: ' + (err?.message || err);
+      console.error(err);
+      safeText(outEl, 'Сетевая ошибка: ' + (err?.message || err));
     } finally {
       setLoading(false, btn);
     }
   }
 
+
   if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn, true));
   if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn, true));
-});
+
+  window.__ms_preview = () => callApi('/import-invoice-preview/', previewBtn, true);
+  window.__ms_import  = () => callApi('/import-invoice-to-supply/', importBtn, true);
+
+  console.log('UI script mounted ✅');
+})();
 </script>
 </body>
 </html>
