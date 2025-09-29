@@ -91,142 +91,154 @@
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
-  const outEl   = $('out');
-  const hintEl  = $('hint');
-  const fileEl  = $('file');
-  const orgEl   = $('org');
-  const storeEl = $('store');
-  const agentEl = $('agent');
-  const usdRateEl = $('usdRate');
-  const coefEl    = $('coef');
-  const shipEl    = $('ship');
-  const previewBtn = $('previewBtn');
-  const importBtn  = $('importBtn');
-
+  const orgEl = $('org'), storeEl = $('store'), agentEl = $('agent');
+  const fileEl = $('file'), usdRateEl = $('usdRate'), coefEl = $('coef'), shipEl = $('ship');
+  const previewBtn = $('previewBtn'), importBtn = $('importBtn');
+  const statusEl = $('status'), resultsEl = $('results'), summaryEl = $('summary');
+  const tableEl = $('table'), debugBox = $('debugBox'), debugEl = $('debug');
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
-  function safeText(el, text) { if (el) el.textContent = text; }
-  function appendLog(msg) { if (outEl) outEl.textContent += `\n${msg}`; }
-  function getCur() {
-    for (const r of curRadios) if (r.checked) return r.value;
-    return 'usd';
-  }
-
-  function setLoading(is, btn) {
+  const getCur = () => [...curRadios].find(r => r.checked)?.value || 'usd';
+  const setStatus = (t) => { if (statusEl) statusEl.textContent = t || ''; };
+  const setLoading = (is, btn) => {
     if (btn) {
-      if (is) {
-        btn.dataset.text = btn.textContent;
-        btn.textContent = 'Загрузка…';
-        btn.disabled = true;
-      } else {
-        btn.textContent = btn.dataset.text || btn.textContent;
-        btn.disabled = false;
-      }
+      if (is) { btn.dataset.text = btn.textContent; btn.textContent = 'Загрузка…'; btn.disabled = true; }
+      else    { btn.textContent = btn.dataset.text || btn.textContent; btn.disabled = false; }
     }
     if (previewBtn && btn !== previewBtn) previewBtn.disabled = !!is;
-    if (importBtn && btn !== importBtn) importBtn.disabled = !!is;
-    if (is) {
-      safeText(outEl, '⏳ Выполняем запрос…');
-      safeText(hintEl, '');
-    }
-  }
+    if (importBtn && btn !== importBtn)   importBtn.disabled = !!is;
+    setStatus(is ? 'Загрузка…' : '');
+  };
 
   function toggleUsd() {
-    const isUsd = getCur() === 'usd';
-    try { usdRateEl && usdRateEl.closest('div') && (usdRateEl.closest('div').style.display = isUsd ? '' : 'none'); } catch {}
-    try { shipEl    && shipEl.closest('div')    && (shipEl.closest('div').style.display    = isUsd ? '' : 'none'); } catch {}
+    const show = getCur() === 'usd';
+    try { $('usdWrap').style.display = show ? '' : 'none'; } catch {}
+    try { $('shipWrap').style.display = show ? '' : 'none'; } catch {}
   }
   curRadios.forEach(r => r.addEventListener('change', toggleUsd));
   toggleUsd();
 
-  function buildQuery({withPriceParams}) {
+  function buildQuery(withPriceParams) {
     const q = new URLSearchParams();
     if (orgEl?.value)   q.set('organization_name', orgEl.value.trim());
-    if (storeEl?.value) q.set('store_name',        storeEl.value.trim());
-    if (agentEl?.value) q.set('agent_name',        agentEl.value.trim());
-
+    if (storeEl?.value) q.set('store_name', storeEl.value.trim());
+    if (agentEl?.value) q.set('agent_name', agentEl.value.trim());
     q.set('auto_create_products', 'true');
     q.set('auto_create_agent', 'true');
 
     const currency = getCur();
     q.set('price_currency', currency);
-
-    const coef = parseFloat(coefEl?.value || '1.6');
-    q.set('coef', String(coef));
-
+    q.set('coef', String(parseFloat(coefEl?.value || '1.6') || 1.6));
     if (withPriceParams && currency === 'usd') {
       const rate = parseFloat(usdRateEl?.value || '');
       if (!rate) throw new Error('Укажите курс доллара');
       q.set('usd_rate', String(rate));
-      const ship = parseFloat(shipEl?.value || '15');
-      q.set('shipping_per_kg_usd', String(ship));
+      q.set('shipping_per_kg_usd', String(parseFloat(shipEl?.value || '15') || 15));
     }
     return q;
   }
 
+
+  function renderPreview(data) {
+
+    resultsEl && (resultsEl.style.display = '');
+    debugBox && (debugBox.style.display = '');
+
+    const rowsTotal = data?.rows_total ?? data?.count ?? '';
+    const poFound  = data?.po_matches_found ?? data?.po_matches_count ?? '';
+    summaryEl && (summaryEl.textContent =
+      `Строк: ${rowsTotal || '—'}. Совпадений с заказами поставщика: ${poFound || 0}.`);
+
+    let rows = [];
+    if (Array.isArray(data?.preview_rows)) rows = data.preview_rows;
+    else if (Array.isArray(data?.items)) rows = data.items;
+    else if (Array.isArray(data?.will_use_existing) || Array.isArray(data?.will_create)) {
+      const a = (data.will_use_existing || []).map(x => ({...x, _po: x.po_match || x.po || null}));
+      const b = (data.will_create || []).map(x => ({...x, _po: x.po_match || x.po || null}));
+      rows = [...a, ...b];
+    } else if (Array.isArray(data)) rows = data;
+
+    const thead = tableEl?.querySelector('thead');
+    const tbody = tableEl?.querySelector('tbody');
+    if (!thead || !tbody) return;
+
+    thead.innerHTML = `
+      <tr>
+        <th>Артикул (станет code)</th>
+        <th>Наименование</th>
+        <th>Цена (KGS)</th>
+        <th>Совпадение в ЗП</th>
+      </tr>
+    `;
+    tbody.innerHTML = '';
+
+    const fmt = (v) => (v === undefined || v === null || Number.isNaN(v)) ? '' : v;
+    rows.forEach(r => {
+      const article = r.article ?? r.code ?? r.art ?? '';
+      const name    = r.name ?? r.title ?? '';
+      const price   = r.price_kgs ?? r.price ?? r.kgs ?? '';
+      const poHit   = r.po_match?.found ?? r._po?.found ?? r.po_found ?? false;
+      const poTxt   = poHit ? 'найдён' : 'нет';
+      const poCls   = poHit ? 'chip ok' : 'chip no';
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mono">${fmt(article)}</td>
+        <td>${fmt(name)}</td>
+        <td class="mono">${fmt(price)}</td>
+        <td><span class="${poCls}">${poTxt}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (debugEl) debugEl.textContent = JSON.stringify(data, null, 2);
+  }
+
   async function callApi(path, btn, withPriceParams) {
     try {
-      console.log('click ->', path);
-      const f = fileEl?.files?.[0];
-      if (!f) {
-        safeText(outEl, 'Выберите файл.');
-        return;
-      }
+      const file = fileEl?.files?.[0];
+      if (!file) { setStatus('Выберите файл.'); return; }
 
       let q;
-      try { q = buildQuery({withPriceParams}); }
-      catch (e) { safeText(outEl, e?.message || String(e)); return; }
+      try { q = buildQuery(withPriceParams); }
+      catch (e) { setStatus(e?.message || String(e)); return; }
 
-      const form = new FormData();
-      form.append('file', f);
+      const form = new FormData(); form.append('file', file);
 
       setLoading(true, btn);
-      const url = `${path}?${q.toString()}`;
-      console.log('fetch:', url);
-      const resp = await fetch(url, { method: 'POST', body: form });
-
+      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
       const ct = resp.headers.get('content-type') || '';
       let data = null, text = null;
 
       if (ct.includes('application/json')) {
-        try {
-          data = await resp.json();
-        } catch (e) {
-          console.warn('json parse fail', e);
-          text = await resp.text();
-        }
+        try { data = await resp.json(); }
+        catch { text = await resp.text().catch(() => '(пусто)'); }
       } else {
-        text = await resp.text();
+        text = await resp.text().catch(() => '(пусто)');
       }
 
-      console.log('status:', resp.status, 'ok:', resp.ok);
-      if (data) {
-        if (resp.ok) {
-          if (data.po_scan_note) safeText(hintEl, data.po_scan_note);
-          else if (path.includes('import-invoice-to-supply')) safeText(hintEl, '✅ Документ Приёмки создан.');
-          else safeText(hintEl, '');
-        } else {
-          safeText(hintEl, `Ошибка ${resp.status}`);
-        }
-        safeText(outEl, JSON.stringify(data, null, 2));
+      if (!resp.ok) {
+        setStatus(`Ошибка ${resp.status}`);
       } else {
-        safeText(outEl, text ?? '(пустой ответ)');
-        if (!resp.ok) safeText(hintEl, `Ошибка ${resp.status}`);
+        setStatus(path.includes('import-invoice-to-supply') ? '✅ Документ Приёмки создан.' : 'Готово');
+      }
+
+      if (data) {
+        renderPreview(data);
+      } else {
+        resultsEl && (resultsEl.style.display = ''); debugBox && (debugBox.style.display = '');
+        if (debugEl) debugEl.textContent = text || '(пустой ответ)';
       }
     } catch (err) {
       console.error(err);
-      safeText(outEl, 'Сетевая ошибка: ' + (err?.message || err));
+      setStatus('Сетевая/клиентская ошибка: ' + (err?.message || err));
     } finally {
       setLoading(false, btn);
     }
   }
 
-
-  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn, true));
-  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn, true));
-
-  window.__ms_preview = () => callApi('/import-invoice-preview/', previewBtn, true);
-  window.__ms_import  = () => callApi('/import-invoice-to-supply/', importBtn, true);
+  previewBtn?.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn, true));
+  importBtn?.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn, true));
 
   console.log('UI script mounted ✅');
 })();
