@@ -5,15 +5,11 @@
   <title>Импорт Приёмки — MoySklad</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      --bg:#f8fafc; --card:#ffffff; --text:#0f172a; --muted:#64748b;
-      --border:#e2e8f0; --accent:#2563eb; --radius:12px; --space:14px; --maxw:1100px;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
+    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --radius:12px; --space:14px; --maxw:1100px; }
+    *{box-sizing:border-box} html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
     .container{width:100%;max-width:var(--maxw);padding:24px 16px}
-    h1,h2,h3{margin:0 0 14px}
+    h2,h3,h4{margin:0 0 12px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);margin-bottom:16px}
     .grid{display:grid;gap:var(--space)}
     .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -22,12 +18,11 @@
     label{display:block;font-weight:600;margin-bottom:6px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .muted{color:var(--muted)}
-    .badge{display:inline-block;padding:2px 6px;font-size:12px;border-radius:8px;background:#eef2ff;color:#3730a3;margin-left:6px}
     input[type="text"],input[type="number"],input[type="file"]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;outline:none}
     input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.3)}
     .radio-group{display:flex;gap:14px;align-items:center}
     .actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer;transition:opacity .15s ease}
+    button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer}
     button.secondary{background:#fff;color:#111827}
     button:disabled{opacity:.6;cursor:not-allowed}
     table{width:100%;border-collapse:collapse;font-size:13px}
@@ -37,9 +32,6 @@
     .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#ecfeff;color:#0369a1;font-size:12px;border:1px solid #bae6fd}
     .ok{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
     .warn{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
-    .inline{display:flex;gap:var(--space);align-items:flex-end;flex-wrap:wrap}
-    .inline>.field{min-width:220px;flex:1}
-    /* overlay */
     .overlay{position:fixed;inset:0;background:rgba(15,23,42,.28);display:none;place-items:center;z-index:9999;backdrop-filter:blur(1px)}
     .overlay.show{display:grid}
     .loader{display:flex;flex-direction:column;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 18px;min-width:220px;box-shadow:0 10px 30px rgba(0,0,0,.1);color:#0f172a}
@@ -53,7 +45,6 @@
 <div class="container">
   <h2>Импорт Приёмки в МойСклад</h2>
 
-  <!-- Блок 1: контекст -->
   <div class="card grid grid-3">
     <div>
       <label>Организация</label>
@@ -64,20 +55,11 @@
       <input id="store" type="text" placeholder="Основной склад" />
     </div>
     <div>
-      <label>Поставщик (контрагент)</label>
+      <label>Поставщик (контрагент) <span class="muted">(для сверки с ЗП)</span></label>
       <input id="agent" type="text" placeholder="Ebay" />
-    </div>
-    <div style="grid-column:1 / -1">
-      <label>ID заказа поставщику (необязательно)</label>
-      <input id="poid" type="text" placeholder="UUID из ссылки МойСклад (purchaseorder)" />
-      <div class="muted" style="margin-top:6px">
-        Пример: в ссылке вида <code>.../#purchaseorder/edit?id=<b>UUID</b></code> возьмите этот <b>UUID</b>.
-        Если оставить пустым, сверка пойдёт по последним заказам указанного поставщика.
-      </div>
     </div>
   </div>
 
-  <!-- Блок 2: цены/валюта -->
   <div class="card grid grid-2">
     <div>
       <label>Валюта</label>
@@ -85,7 +67,7 @@
         <label><input type="radio" name="currency" value="usd" checked> Доллар</label>
         <label><input type="radio" name="currency" value="kgs"> Сом</label>
       </div>
-      <p class="muted" style="margin:6px 0 0">Если в файле есть колонка «Валюта», она приоритетнее этого переключателя.</p>
+      <p class="muted" style="margin:6px 0 0">Артикул из файла будет записан в <b>КОД</b> товара. Сверка ЗП идёт по <b>code</b>.</p>
     </div>
     <div class="grid grid-2">
       <div>
@@ -93,23 +75,22 @@
         <input id="usdRate" type="number" step="0.0001" min="0" placeholder="напр., 82" />
       </div>
       <div>
-        <label>Коэффициент <span class="badge">по умолч. 1.6</span></label>
+        <label>Коэффициент <span class="muted">(по умолч. 1.6)</span></label>
         <input id="coef" type="number" step="0.01" min="0" value="1.6" />
       </div>
       <div>
-        <label>Доставка $/кг <span class="badge">по умолч. 15</span></label>
+        <label>Доставка $/кг <span class="muted">(по умолч. 15)</span></label>
         <input id="ship" type="number" step="0.01" min="0" value="15" />
       </div>
     </div>
   </div>
 
-  <!-- Блок 3: файл + действия -->
   <div class="card">
-    <div class="inline">
-      <div class="field">
+    <div class="row" style="align-items:flex-end">
+      <div style="flex:1;min-width:260px">
         <label>Файл поставщика</label>
         <input id="file" type="file" />
-        <div class="muted" style="margin-top:6px">Рекомендуется <b>.xlsx</b> или <b>.csv</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.</div>
+        <div class="muted" style="margin-top:6px">Рекомендуется <b>.xlsx</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx. Колонка «Артикул» должна быть формата «Текст».</div>
       </div>
       <div class="actions">
         <button id="previewBtn" type="button" class="secondary">Превью</button>
@@ -119,15 +100,14 @@
     </div>
   </div>
 
-  <!-- Блок 4: результат -->
   <div id="resultCard" class="card" style="display:none">
     <h3>Результат</h3>
     <div id="stats" class="row" style="gap:8px;margin:8px 0 12px"></div>
     <div id="poUsed" class="muted" style="margin:6px 0 12px"></div>
 
-    <div id="matchesBox">
-      <h4>Совпадения с заказами поставщику</h4>
-      <div id="matchesTableWrap"></div>
+    <div id="poSeenBox" style="margin-top:10px">
+      <h4>Каждая позиция и попадание в заказы поставщику</h4>
+      <div id="poSeenWrap"></div>
     </div>
 
     <div id="existingBox" style="display:none;margin-top:16px">
@@ -164,58 +144,46 @@
 document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
 
-  // inputs
-  const orgEl = $('org'), storeEl = $('store'), agentEl = $('agent');
-  const poidEl = $('poid');
-  const usdRateEl = $('usdRate'), coefEl = $('coef'), shipEl = $('ship'), fileEl = $('file');
+  const orgEl=$('org'), storeEl=$('store'), agentEl=$('agent');
+  const usdRateEl=$('usdRate'), coefEl=$('coef'), shipEl=$('ship'), fileEl=$('file');
+  const previewBtn=$('previewBtn'), importBtn=$('importBtn'), hintEl=$('hint');
+  const overlay=$('overlay'), overlayMsg=$('overlayMsg');
 
-  // ui
-  const previewBtn = $('previewBtn'), importBtn = $('importBtn'), hintEl = $('hint');
-  const overlay = $('overlay'), overlayMsg = $('overlayMsg');
+  const resultCard=$('resultCard'), statsEl=$('stats'), poUsedEl=$('poUsed');
+  const poSeenWrap=$('poSeenWrap'), existingBox=$('existingBox'), existingWrap=$('existingTableWrap');
+  const createBox=$('createBox'), createWrap=$('createTableWrap');
+  const priceBox=$('priceBox'), priceWrap=$('priceTableWrap'), rawEl=$('raw');
 
-  const resultCard = $('resultCard'), statsEl = $('stats'), poUsedEl = $('poUsed');
-  const matchesBox = $('matchesBox'), matchesWrap = $('matchesTableWrap');
-  const existingBox = $('existingBox'), existingWrap = $('existingTableWrap');
-  const createBox = $('createBox'), createWrap = $('createTableWrap');
-  const priceBox = $('priceBox'), priceWrap = $('priceTableWrap');
-  const rawEl = $('raw');
-
-  const curRadios = document.querySelectorAll('input[name="currency"]');
-
-  function getCur(){ for (const r of curRadios) if (r.checked) return r.value; return 'kgs'; }
+  const curRadios=document.querySelectorAll('input[name="currency"]');
+  function getCur(){ for(const r of curRadios) if(r.checked) return r.value; return 'usd'; }
   function toggleUsd(){
-    const isUsd = getCur()==='usd';
-    usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
-    shipEl.closest('div').style.display = isUsd ? '' : 'none';
+    const isUsd=getCur()==='usd';
+    usdRateEl.closest('div').style.display=isUsd?'':'none';
+    shipEl.closest('div').style.display=isUsd?'':'none';
   }
   curRadios.forEach(r=>r.addEventListener('change',toggleUsd)); toggleUsd();
 
   function setLoading(v,msg='Обрабатываем…'){
-    if(v){ overlay.classList.add('show'); overlayMsg.textContent = msg; previewBtn.disabled=importBtn.disabled=true; }
-    else{ overlay.classList.remove('show'); previewBtn.disabled=importBtn.disabled=false; }
+    if(v){ overlay.classList.add('show'); overlayMsg.textContent=msg; previewBtn.disabled=importBtn.disabled=true; }
+    else { overlay.classList.remove('show'); previewBtn.disabled=importBtn.disabled=false; }
   }
 
   function buildQuery({withPriceParams}){
-    const q = new URLSearchParams();
-    if (orgEl.value.trim())   q.set('organization_name', orgEl.value.trim());
-    if (storeEl.value.trim()) q.set('store_name', storeEl.value.trim());
-    if (agentEl.value.trim()) q.set('agent_name', agentEl.value.trim());
-
-    const poid = poidEl.value.trim();
-    if (poid) q.set('purchase_order_id', poid);
-
+    const q=new URLSearchParams();
+    if(orgEl.value.trim()) q.set('organization_name', orgEl.value.trim());
+    if(storeEl.value.trim()) q.set('store_name', storeEl.value.trim());
+    if(agentEl.value.trim()) q.set('agent_name', agentEl.value.trim());
     q.set('auto_create_products','true');
     q.set('auto_create_agent','true');
 
-    const currency = getCur();
+    const currency=getCur();
     q.set('price_currency', currency);
-
-    if (withPriceParams){
-      const coef = parseFloat(coefEl.value || '1.6'); q.set('coef', String(coef));
-      if (currency === 'usd'){
-        const rate = parseFloat(usdRateEl.value || ''); if(!rate) throw new Error('Укажите курс доллара');
+    if(withPriceParams){
+      const coef=parseFloat(coefEl.value||'1.6'); q.set('coef', String(coef));
+      if(currency==='usd'){
+        const rate=parseFloat(usdRateEl.value||''); if(!rate){ throw new Error('Укажите курс доллара'); }
         q.set('usd_rate', String(rate));
-        const ship = parseFloat(shipEl.value || '15'); q.set('shipping_per_kg_usd', String(ship));
+        const ship=parseFloat(shipEl.value||'15'); q.set('shipping_per_kg_usd', String(ship));
       }
     }
     return q;
@@ -228,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
       else if(k==='text') node.textContent=v;
       else node.setAttribute(k,v);
     }
-    for (const ch of children){
+    for(const ch of children){
       if(ch==null) continue;
       if(typeof ch==='string') node.appendChild(document.createTextNode(ch));
       else node.appendChild(ch);
@@ -236,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return node;
   }
   const pill=(t,c)=>el('span',{class:'pill '+(c||''),text:t});
-  function table(headers,rows){
+  function table(headers, rows){
     const tbl=el('table'), thead=el('thead'), trh=el('tr');
     headers.forEach(h=>trh.appendChild(el('th',{text:h})));
     thead.appendChild(trh);
@@ -245,7 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const tr=el('tr');
       r.forEach(cell=>{
         const td=el('td');
-        if(cell instanceof Node) td.appendChild(cell); else td.textContent = cell ?? '';
+        if(cell instanceof Node) td.appendChild(cell); else td.textContent=(cell ?? '');
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -254,84 +222,61 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderResult(data, forImport=false){
-    resultCard.style.display='';
-    statsEl.innerHTML=''; matchesWrap.innerHTML=''; existingWrap.innerHTML='';
-    createWrap.innerHTML=''; priceWrap.innerHTML=''; poUsedEl.textContent='';
-    rawEl.textContent = JSON.stringify(data,null,2);
+    resultCard.style.display=''; statsEl.innerHTML=''; poSeenWrap.innerHTML='';
+    existingWrap.innerHTML=''; createWrap.innerHTML=''; priceWrap.innerHTML='';
+    rawEl.textContent=JSON.stringify(data,null,2);
 
-    if (data.error || data.detail){ statsEl.appendChild(pill('Ошибка','warn')); return; }
+    if(data.error || data.detail){ statsEl.appendChild(pill('Ошибка','warn')); return; }
 
     const pills=[];
-    if (data.rows_total!=null) pills.push(pill(`Позиции: ${data.rows_total}`));
-    if (data.will_use_existing_count!=null) pills.push(pill(`Найдены: ${data.will_use_existing_count}`,'ok'));
-    if (data.will_create_count!=null) pills.push(pill(`К созданию: ${data.will_create_count}`,'warn'));
-    if (data.created_positions!=null) pills.push(pill(`Создано позиций: ${data.created_positions}`,'ok'));
-    if (data.not_found_items && data.not_found_items.length) pills.push(pill(`Не найдены: ${data.not_found_items.length}`,'warn'));
+    if(data.rows_total!=null) pills.push(pill(`Позиции: ${data.rows_total}`));
+    if(data.will_use_existing_count!=null) pills.push(pill(`Найдены: ${data.will_use_existing_count}`,'ok'));
+    if(data.will_create_count!=null) pills.push(pill(`К созданию: ${data.will_create_count}`,'warn'));
+    if(data.created_positions!=null) pills.push(pill(`Создано позиций: ${data.created_positions}`,'ok'));
+    if(data.not_found_items && data.not_found_items.length) pills.push(pill(`Не найдены: ${data.not_found_items.length}`,'warn'));
     pills.forEach(p=>statsEl.appendChild(p));
 
-    // ===== Совпадения с ЗП — всегда показываем статус =====
-    (function renderPOMatches(){
-      matchesBox.style.display = '';      // не скрываем блок
-      matchesWrap.innerHTML = '';         // очищаем содержимое
+    const poUsed = Array.isArray(data.purchase_orders_used) ? data.purchase_orders_used : [];
+    if(poUsed.length){
+      poUsedEl.textContent = 'Проверены заказы поставщику: ' + poUsed.map(p=>p.name||p.id).join(', ');
+    } else if ((document.getElementById('agent').value||'').trim()){
+      poUsedEl.textContent = 'Сверка ЗП: поставщик задан, но совпадений/данных нет.';
+    } else {
+      poUsedEl.textContent = 'Сверка ЗП: поставщик не задан — проверка не выполнялась.';
+    }
 
-      // поддерживаем оба поля: matches_by_article (основное) и po_matches (на всякий)
-      const mb = data.matches_by_article || data.po_matches || {};
-      const poUsed = Array.isArray(data.purchase_orders_used) ? data.purchase_orders_used : [];
-
-      // контекст: по каким ЗП сверяли
-      let contextMsg = '';
-      if (poUsed.length) {
-        const names = poUsed.map(p => p.name || p.id).join(', ');
-        contextMsg = `Проверены заказы поставщику: ${names}`;
-      } else if ((data._po_check || '').toString() === 'skipped' || (!data.purchase_orders_used && !data.matches_by_article && !data.po_matches)) {
-        contextMsg = 'Сверка не выполнялась (не указан ID заказа и не задан поставщик).';
-      } else {
-        contextMsg = 'Сверка заказов: нет данных от сервера.';
-      }
-      poUsedEl.textContent = contextMsg;
-
-      const entries = Object.entries(mb);
-      const matchCount = entries.reduce((acc, [, arr]) => acc + (Array.isArray(arr) ? arr.length : 0), 0);
-
-      if (matchCount > 0) {
-        const hdr = el('div', {class:'muted', style:'margin:6px 0 8px', text:`Найдены совпадения (${matchCount}).`});
-        matchesWrap.appendChild(hdr);
-        const rows = entries.map(([article, list])=>{
-          const where = (list || []).map(x => (x.po_name || x.po_id || '')).join(', ');
-          return [article, where || '—'];
-        });
-        matchesWrap.appendChild(table(['Артикул (из файла)','Совпавшие заказы поставщику'], rows));
-      } else {
-        const info = el('div', {class:'muted', style:'margin:6px 0 8px',
-          text: (poUsed.length || data.matches_by_article || data.po_matches) ? 'Совпадений не найдено.' : 'Сверка не выполнялась.'
-        });
-        matchesWrap.appendChild(info);
-      }
-    })();
-    // ===== end: Совпадения с ЗП =====
+    // каждая позиция и найдено ли в ЗП
+    const seen = Array.isArray(data.po_seen) ? data.po_seen : [];
+    const rows = seen.map(x=>[
+      x.article||'',
+      x.name||'',
+      (x.in_po ? 'Да' : 'Нет'),
+      (Array.isArray(x.orders) && x.orders.length ? x.orders.join(', ') : '—')
+    ]);
+    poSeenWrap.appendChild(table(['Код (из файла)','Наименование','В ЗП','Где найдено'], rows));
 
     const ex = data.will_use_existing||[];
     if (ex.length){
       existingBox.style.display='';
-      existingWrap.appendChild(table(['Артикул (code)','Наименование','Производитель','Product ID'],
+      existingWrap.appendChild(table(['Код','Наименование','Производитель','Product ID'],
         ex.map(x=>[x.article||'',x.name||'',x.manufacturer||'',x.product_id||''])));
     } else existingBox.style.display='none';
 
     const cr = data.will_create||[];
     if (cr.length){
       createBox.style.display='';
-      createWrap.appendChild(table(['Артикул (code)','Наименование','Производитель'],
+      createWrap.appendChild(table(['Код','Наименование','Производитель'],
         cr.map(x=>[x.article||'',x.name||'',x.manufacturer||''])));
     } else createBox.style.display='none';
 
     const cp = data.calculated_prices||[];
     if (cp.length){
       priceBox.style.display='';
-      priceWrap.appendChild(table(['Артикул','Цена (KGS)'],
-        cp.map(x=>[x.article||'', (x.price_kgs!=null? String(x.price_kgs) : '—')])));
+      priceWrap.appendChild(table(['Код','Цена (KGS)'],
+        cp.map(x=>[x.article||'', (x.price_kgs!=null? String(x.price_kgs):'—')])));
     } else priceBox.style.display='none';
 
-    if (forImport && !data.error && !data.detail){ hintEl.textContent='Готово. Документ Приёмки создан.'; }
+    if(forImport && !data.error && !data.detail){ hintEl.textContent='Готово. Документ Приёмки создан.'; }
   }
 
   async function callApi(path, withPriceParams){
