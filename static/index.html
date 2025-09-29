@@ -5,18 +5,24 @@
   <title>Импорт Приёмки — МойСклад</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --accent:#2563eb; --danger:#ef4444; --ok:#16a34a; --radius:12px; --space:14px; --maxw:1100px; }
-    *{box-sizing:border-box} html,body{height:100%}
+    :root {
+      --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0;
+      --accent:#2563eb; --radius:12px; --maxw:1100px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
     .container{width:100%;max-width:var(--maxw);padding:24px 16px}
     h2{margin:0 0 16px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);margin-bottom:16px}
-    .grid{display:grid;gap:var(--space)} .grid-2{grid-template-columns: repeat(2,minmax(0,1fr))} .grid-3{grid-template-columns: repeat(3,minmax(0,1fr))}
+    .grid{display:grid;gap:14px}
+    .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
     @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
     label{display:block;font-weight:600;margin-bottom:6px}
     input[type=text],input[type=number],input[type=file]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;outline:none}
     input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.3)}
-    .radio-group{display:flex;gap:14px}
+    .radio-group{display:flex;gap:14px;align-items:center}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .muted{color:var(--muted)}
     button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer}
@@ -24,9 +30,9 @@
     button:disabled{opacity:.6;cursor:not-allowed}
     table{width:100%;border-collapse:collapse}
     th,td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
-    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-    .chip.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
-    .chip.no{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid transparent}
+    .chip.ok{background:#dcfce7;color:#166534;border-color:#86efac}
+    .chip.no{background:#fee2e2;color:#991b1b;border-color:#fecaca}
     .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-left:8px}
     @keyframes spin{to{transform:rotate(360deg)}}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
@@ -38,7 +44,7 @@
 
   <div class="card grid grid-3">
     <div><label>Организация</label><input id="org" type="text" placeholder="West-parts"></div>
-    <div><label>Склад</label><input id="store" type="text" placeholder="Основной"></div>
+    <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад"></div>
     <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay"></div>
   </div>
 
@@ -67,7 +73,7 @@
       </div>
       <div class="row">
         <button id="previewBtn" type="button" class="secondary">Превью</button>
-        <button id="importBtn" type="button">Создать приёмку</button>
+        <button id="importBtn"  type="button">Создать приёмку</button>
         <span id="status" class="muted"></span>
       </div>
     </div>
@@ -88,159 +94,236 @@
     </details>
   </div>
 </div>
+
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
-  const orgEl = $('org'), storeEl = $('store'), agentEl = $('agent');
-  const fileEl = $('file'), usdRateEl = $('usdRate'), coefEl = $('coef'), shipEl = $('ship');
-  const previewBtn = $('previewBtn'), importBtn = $('importBtn');
-  const statusEl = $('status'), resultsEl = $('results'), summaryEl = $('summary');
-  const tableEl = $('table'), debugBox = $('debugBox'), debugEl = $('debug');
+  const orgEl   = $('org');
+  const storeEl = $('store');
+  const agentEl = $('agent');
+  const usdRateEl = $('usdRate');
+  const coefEl    = $('coef');
+  const shipEl    = $('ship');
+  const fileEl    = $('file');
+
+  const previewBtn = $('previewBtn');
+  const importBtn  = $('importBtn');
+  const statusEl   = $('status');
+
+  const resultsEl = $('results');
+  const summaryEl = $('summary');
+  const tableEl   = $('table');
+  const debugBox  = $('debugBox');
+  const debugEl   = $('debug');
+
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
-  const getCur = () => [...curRadios].find(r => r.checked)?.value || 'usd';
-  const setStatus = (t) => { if (statusEl) statusEl.textContent = t || ''; };
-  const setLoading = (is, btn) => {
-    if (btn) {
-      if (is) { btn.dataset.text = btn.textContent; btn.textContent = 'Загрузка…'; btn.disabled = true; }
-      else    { btn.textContent = btn.dataset.text || btn.textContent; btn.disabled = false; }
+  const setStatus = (msg, spinning=false) => {
+    statusEl.textContent = msg || '';
+    statusEl.style.display = msg ? '' : 'none';
+    if (spinning) {
+      if (!statusEl.querySelector('.spinner')) {
+        const s = document.createElement('span'); s.className = 'spinner';
+        statusEl.appendChild(s);
+      }
+    } else {
+      const s = statusEl.querySelector('.spinner'); if (s) s.remove();
     }
-    if (previewBtn && btn !== previewBtn) previewBtn.disabled = !!is;
-    if (importBtn && btn !== importBtn)   importBtn.disabled = !!is;
-    setStatus(is ? 'Загрузка…' : '');
   };
 
-  function toggleUsd() {
-    const show = getCur() === 'usd';
-    try { $('usdWrap').style.display = show ? '' : 'none'; } catch {}
-    try { $('shipWrap').style.display = show ? '' : 'none'; } catch {}
-  }
+  const getCurrency = () => {
+    for (const r of curRadios) if (r.checked) return r.value;
+    return 'usd';
+  };
+
+  const toggleUsd = () => {
+    const isUsd = getCurrency() === 'usd';
+    usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
+    shipEl.closest('div').style.display    = isUsd ? '' : 'none';
+  };
   curRadios.forEach(r => r.addEventListener('change', toggleUsd));
   toggleUsd();
 
-  function buildQuery(withPriceParams) {
+  const buildQuery = (withPriceParams) => {
     const q = new URLSearchParams();
-    if (orgEl?.value)   q.set('organization_name', orgEl.value.trim());
-    if (storeEl?.value) q.set('store_name', storeEl.value.trim());
-    if (agentEl?.value) q.set('agent_name', agentEl.value.trim());
+    if (orgEl.value.trim())   q.set('organization_name', orgEl.value.trim());
+    if (storeEl.value.trim()) q.set('store_name',        storeEl.value.trim());
+    if (agentEl.value.trim()) q.set('agent_name',        agentEl.value.trim());
     q.set('auto_create_products', 'true');
     q.set('auto_create_agent', 'true');
 
-    const currency = getCur();
+    const currency = getCurrency();
     q.set('price_currency', currency);
-    q.set('coef', String(parseFloat(coefEl?.value || '1.6') || 1.6));
+    const coef = parseFloat(coefEl.value || '1.6') || 1.6;
+    q.set('coef', String(coef));
+
     if (withPriceParams && currency === 'usd') {
-      const rate = parseFloat(usdRateEl?.value || '');
+      const rate = parseFloat(usdRateEl.value || '');
       if (!rate) throw new Error('Укажите курс доллара');
       q.set('usd_rate', String(rate));
-      q.set('shipping_per_kg_usd', String(parseFloat(shipEl?.value || '15') || 15));
+      const ship = parseFloat(shipEl.value || '15') || 15;
+      q.set('shipping_per_kg_usd', String(ship));
     }
     return q;
-  }
+  };
 
+  const renderPreview = (data) => {
+    resultsEl.style.display = '';
+    debugBox.style.display  = '';
+    summaryEl.textContent = '';
 
-  function renderPreview(data) {
+    // сводка
+    const rowsTotal = data?.rows_total ?? data?.count ?? data?.total ?? '';
+    const poFound   = data?.po_matches_found ?? data?.po_matches_count ?? data?.po_found ?? 0;
+    summaryEl.textContent = `Строк: ${rowsTotal || '—'}. Совпадений с заказами поставщика: ${poFound || 0}.`;
 
-    resultsEl && (resultsEl.style.display = '');
-    debugBox && (debugBox.style.display = '');
+    // карты цен и совпадений
+    const norm = (s) => (s ?? '').toString().trim().toLowerCase();
+    const priceMap = new Map();
+    const poMap    = new Map();
 
-    const rowsTotal = data?.rows_total ?? data?.count ?? '';
-    const poFound  = data?.po_matches_found ?? data?.po_matches_count ?? '';
-    summaryEl && (summaryEl.textContent =
-      `Строк: ${rowsTotal || '—'}. Совпадений с заказами поставщика: ${poFound || 0}.`);
+    const collectPrices = (arr) => {
+      if (!Array.isArray(arr)) return;
+      for (const x of arr) {
+        const key = norm(x.article ?? x.code ?? x.art);
+        if (!key) continue;
+        const v = x.price_kgs ?? x.kgs ?? x.price;
+        if (v !== undefined && v !== null && !Number.isNaN(+v)) priceMap.set(key, +v);
+      }
+    };
+    collectPrices(data?.calculated_prices);
+    collectPrices(data?.prices);
+    collectPrices(data?.preview_prices);
 
+    const collectPo = (arr) => {
+      if (!Array.isArray(arr)) return;
+      for (const x of arr) {
+        const key = norm(x.article ?? x.code ?? x.art);
+        if (!key) continue;
+        const ok = !!(x.found ?? x.ok ?? x.match ?? x.matched ?? false);
+        poMap.set(key, ok);
+      }
+    };
+    collectPo(data?.po_matches?.items);
+    collectPo(data?.po_matches);
+    collectPo(data?.po_found_list);
+
+    // выбрать базовый список строк
     let rows = [];
-    if (Array.isArray(data?.preview_rows)) rows = data.preview_rows;
-    else if (Array.isArray(data?.items)) rows = data.items;
-    else if (Array.isArray(data?.will_use_existing) || Array.isArray(data?.will_create)) {
-      const a = (data.will_use_existing || []).map(x => ({...x, _po: x.po_match || x.po || null}));
-      const b = (data.will_create || []).map(x => ({...x, _po: x.po_match || x.po || null}));
-      rows = [...a, ...b];
-    } else if (Array.isArray(data)) rows = data;
+    const candidates = [
+      data?.preview_rows,
+      data?.rows,
+      data?.items,
+      data?.lines,
+      data?.entries,
+      data?.parsed_rows,
+      data?.table,
+      Array.isArray(data?.will_use_existing) || Array.isArray(data?.will_create)
+        ? [...(data.will_use_existing||[]), ...(data.will_create||[])] : null,
+    ].filter(Boolean);
 
-    const thead = tableEl?.querySelector('thead');
-    const tbody = tableEl?.querySelector('tbody');
-    if (!thead || !tbody) return;
+    if (!candidates.length) {
+      for (const k of Object.keys(data||{})) {
+        const v = data[k];
+        if (Array.isArray(v) && v.some(o => o && (('article' in o) || ('code' in o) || ('name' in o)))) {
+          candidates.push(v);
+        }
+      }
+    }
+    if (candidates.length) {
+      rows = candidates.sort((a,b) => (b?.[0] ? Object.keys(b[0]).length : 0) - (a?.[0] ? Object.keys(a[0]).length : 0))[0];
+    }
 
+    const thead = tableEl.querySelector('thead');
+    const tbody = tableEl.querySelector('tbody');
     thead.innerHTML = `
       <tr>
         <th>Артикул (станет code)</th>
         <th>Наименование</th>
         <th>Цена (KGS)</th>
         <th>Совпадение в ЗП</th>
-      </tr>
-    `;
+      </tr>`;
     tbody.innerHTML = '';
 
     const fmt = (v) => (v === undefined || v === null || Number.isNaN(v)) ? '' : v;
-    rows.forEach(r => {
+
+    for (const r of (rows || [])) {
       const article = r.article ?? r.code ?? r.art ?? '';
-      const name    = r.name ?? r.title ?? '';
-      const price   = r.price_kgs ?? r.price ?? r.kgs ?? '';
-      const poHit   = r.po_match?.found ?? r._po?.found ?? r.po_found ?? false;
-      const poTxt   = poHit ? 'найдён' : 'нет';
-      const poCls   = poHit ? 'chip ok' : 'chip no';
+      const name    = r.name ?? r.title ?? r.productName ?? '';
+      let price     = r.price_kgs ?? r.kgs ?? r.price;
+      if ((price === undefined || price === null || Number.isNaN(+price)) && article) {
+        const p = priceMap.get(norm(article));
+        if (p !== undefined) price = p;
+      }
+      let poHit = r.po_match?.found ?? r.po_found ?? r.found ?? false;
+      if (!poHit && article) poHit = !!poMap.get(norm(article));
 
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td class="mono">${fmt(article)}</td>
         <td>${fmt(name)}</td>
         <td class="mono">${fmt(price)}</td>
-        <td><span class="${poCls}">${poTxt}</span></td>
-      `;
+        <td><span class="chip ${poHit ? 'ok' : 'no'}">${poHit ? 'найдён' : 'нет'}</span></td>`;
       tbody.appendChild(tr);
-    });
+    }
 
-    if (debugEl) debugEl.textContent = JSON.stringify(data, null, 2);
-  }
+    // сырой JSON (для отладки)
+    debugEl.textContent = JSON.stringify(data, null, 2);
+  };
 
-  async function callApi(path, btn, withPriceParams) {
+  const callApi = async (path, withPriceParams, btn) => {
     try {
-      const file = fileEl?.files?.[0];
+      const file = fileEl.files?.[0];
       if (!file) { setStatus('Выберите файл.'); return; }
 
       let q;
       try { q = buildQuery(withPriceParams); }
-      catch (e) { setStatus(e?.message || String(e)); return; }
+      catch (e) { setStatus(e.message || String(e)); return; }
 
-      const form = new FormData(); form.append('file', file);
+      const form = new FormData();
+      form.append('file', file);
 
-      setLoading(true, btn);
+      setStatus('Загрузка…', true);
+      previewBtn.disabled = true; importBtn.disabled = true;
+
       const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
       const ct = resp.headers.get('content-type') || '';
-      let data = null, text = null;
+      let data, text;
 
       if (ct.includes('application/json')) {
-        try { data = await resp.json(); }
-        catch { text = await resp.text().catch(() => '(пусто)'); }
+        try { data = await resp.json(); } catch { text = await resp.text(); }
       } else {
-        text = await resp.text().catch(() => '(пусто)');
+        text = await resp.text();
       }
 
       if (!resp.ok) {
         setStatus(`Ошибка ${resp.status}`);
       } else {
-        setStatus(path.includes('import-invoice-to-supply') ? '✅ Документ Приёмки создан.' : 'Готово');
+        setStatus(path.includes('import-invoice-to-supply') ? '✅ Приёмка создана' : 'Готово');
       }
 
       if (data) {
         renderPreview(data);
       } else {
-        resultsEl && (resultsEl.style.display = ''); debugBox && (debugBox.style.display = '');
-        if (debugEl) debugEl.textContent = text || '(пустой ответ)';
+        // если пришёл не JSON — всё равно покажем
+        resultsEl.style.display = '';
+        debugBox.style.display  = '';
+        summaryEl.textContent   = 'Ответ не JSON, смотрите «Технические детали».';
+        tableEl.querySelector('thead').innerHTML = '';
+        tableEl.querySelector('tbody').innerHTML = '';
+        debugEl.textContent = text || '(пусто)';
       }
     } catch (err) {
-      console.error(err);
-      setStatus('Сетевая/клиентская ошибка: ' + (err?.message || err));
+      setStatus('Сетевая ошибка: ' + (err?.message || err));
     } finally {
-      setLoading(false, btn);
+      previewBtn.disabled = false; importBtn.disabled = false;
     }
-  }
+  };
 
-  previewBtn?.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn, true));
-  importBtn?.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn, true));
+  previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', true, previewBtn));
+  importBtn .addEventListener('click', () => callApi('/import-invoice-to-supply/', true, importBtn));
 
-  console.log('UI script mounted ✅');
+  console.log('UI loaded ✅');
 })();
 </script>
 </body>
