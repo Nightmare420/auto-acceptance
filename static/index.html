@@ -5,24 +5,18 @@
   <title>Импорт Приёмки — МойСклад</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root {
-      --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0;
-      --accent:#2563eb; --radius:12px; --maxw:1100px;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
+    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --accent:#2563eb; --radius:12px; --space:14px; --maxw:1100px; }
+    *{box-sizing:border-box} html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
     .container{width:100%;max-width:var(--maxw);padding:24px 16px}
     h2{margin:0 0 16px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:0 1px 2px rgba(16,24,40,.04);margin-bottom:16px}
-    .grid{display:grid;gap:14px}
-    .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-    @media (max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
+    .grid{display:grid;gap:var(--space)} .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))} .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    @media(max-width:900px){.grid-2,.grid-3{grid-template-columns:1fr}}
     label{display:block;font-weight:600;margin-bottom:6px}
     input[type=text],input[type=number],input[type=file]{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;outline:none}
     input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.3)}
-    .radio-group{display:flex;gap:14px;align-items:center}
+    .radio-group{display:flex;gap:14px}
     .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .muted{color:var(--muted)}
     button{padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#111827;color:#fff;cursor:pointer}
@@ -30,11 +24,9 @@
     button:disabled{opacity:.6;cursor:not-allowed}
     table{width:100%;border-collapse:collapse}
     th,td{border-bottom:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top}
-    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid transparent}
-    .chip.ok{background:#dcfce7;color:#166534;border-color:#86efac}
-    .chip.no{background:#fee2e2;color:#991b1b;border-color:#fecaca}
-    .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-left:8px}
-    @keyframes spin{to{transform:rotate(360deg)}}
+    .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+    .chip.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
+    .chip.no{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
   </style>
 </head>
@@ -43,9 +35,9 @@
   <h2>Импорт Приёмки в МойСклад</h2>
 
   <div class="card grid grid-3">
-    <div><label>Организация</label><input id="org" type="text" placeholder="West-parts"></div>
-    <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад"></div>
-    <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay"></div>
+    <div><label>Организация</label><input id="org" type="text" placeholder="West-parts" /></div>
+    <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад" /></div>
+    <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay" /></div>
   </div>
 
   <div class="card grid grid-2">
@@ -58,9 +50,9 @@
       <p class="muted" style="margin:6px 0 0">Если в файле есть колонка «Валюта», она приоритетнее переключателя.</p>
     </div>
     <div class="grid grid-3">
-      <div id="usdWrap"><label>Курс $</label><input id="usdRate" type="number" step="0.0001" min="0" placeholder="например, 87"></div>
-      <div><label>Коэффициент</label><input id="coef" type="number" step="0.01" min="0" value="1.6"></div>
-      <div id="shipWrap"><label>Доставка $/кг</label><input id="ship" type="number" step="0.01" min="0" value="15"></div>
+      <div><label>Курс $</label><input id="usdRate" type="number" step="0.0001" min="0" placeholder="например, 87" /></div>
+      <div><label>Коэффициент</label><input id="coef" type="number" step="0.01" min="0" value="1.6" /></div>
+      <div><label>Доставка $/кг</label><input id="ship" type="number" step="0.01" min="0" value="15" /></div>
     </div>
   </div>
 
@@ -68,262 +60,175 @@
     <div class="row">
       <div style="flex:1;min-width:260px">
         <label>Файл поставщика</label>
-        <input id="file" type="file">
+        <input id="file" type="file" />
         <div class="muted" style="margin-top:6px">Рекомендуется <b>.xlsx</b>. Старый <b>.xls</b> может не читаться — сохраните как .xlsx.</div>
       </div>
       <div class="row">
         <button id="previewBtn" type="button" class="secondary">Превью</button>
-        <button id="importBtn"  type="button">Создать приёмку</button>
+        <button id="importBtn" type="button">Создать приёмку</button>
         <span id="status" class="muted"></span>
       </div>
     </div>
   </div>
 
   <div class="card" id="results" style="display:none">
-    <h3>Результаты</h3>
     <div id="summary" class="muted" style="margin:8px 0 12px"></div>
     <div style="overflow:auto">
       <table id="table"><thead></thead><tbody></tbody></table>
     </div>
   </div>
-
-  <div class="card" id="debugBox" style="display:none">
-    <details>
-      <summary>Технические детали (JSON)</summary>
-      <pre id="debug" class="mono" style="white-space:pre-wrap"></pre>
-    </details>
-  </div>
 </div>
 
 <script>
-(function () {
-  const $ = (id) => document.getElementById(id);
-  const orgEl   = $('org');
-  const storeEl = $('store');
-  const agentEl = $('agent');
-  const usdRateEl = $('usdRate');
-  const coefEl    = $('coef');
-  const shipEl    = $('ship');
-  const fileEl    = $('file');
+(() => {
+  const $=(id)=>document.getElementById(id);
+  const org=$('org'), store=$('store'), agent=$('agent');
+  const file=$('file'), status=$('status');
+  const usd=$('usdRate'), coef=$('coef'), ship=$('ship');
+  const previewBtn=$('previewBtn'), importBtn=$('importBtn');
+  const table=$('table'), thead=table.querySelector('thead'), tbody=table.querySelector('tbody');
+  const radios=[...document.querySelectorAll('input[name="currency"]')];
 
-  const previewBtn = $('previewBtn');
-  const importBtn  = $('importBtn');
-  const statusEl   = $('status');
+  let preview=null;           // ответ /import-invoice-preview/
+  let weights={};             // {rowIndex: weight}
+  let currency='usd';
 
-  const resultsEl = $('results');
-  const summaryEl = $('summary');
-  const tableEl   = $('table');
-  const debugBox  = $('debugBox');
-  const debugEl   = $('debug');
-
-  const curRadios = document.querySelectorAll('input[name="currency"]');
-
-  const setStatus = (msg, spinning=false) => {
-    statusEl.textContent = msg || '';
-    statusEl.style.display = msg ? '' : 'none';
-    if (spinning) {
-      if (!statusEl.querySelector('.spinner')) {
-        const s = document.createElement('span'); s.className = 'spinner';
-        statusEl.appendChild(s);
-      }
-    } else {
-      const s = statusEl.querySelector('.spinner'); if (s) s.remove();
+  function getCur(){ const r=radios.find(x=>x.checked); return r?r.value:'usd'; }
+  function setLoading(b,btn){ if(btn){btn.disabled=b; btn.textContent=b?(btn===previewBtn?'Загрузка…':'Создание…'): (btn===previewBtn?'Превью':'Создать приёмку');} }
+  function priceKGS(row){
+    const price = row.price_raw;
+    if (price==null) return null;
+    const coefv=parseFloat(coef.value||'1.6')||1.6;
+    if (currency==='usd'){
+      const rate=parseFloat(usd.value||'0'); if(!rate) return null;
+      const shipv=parseFloat(ship.value||'0');
+      const w=parseFloat(weights[row.__idx]||'0')||0;
+      return Math.round(((price*coefv)+(w*shipv))*rate);
+    }else{
+      return Math.round(price*coefv);
     }
-  };
+  }
 
-  const getCurrency = () => {
-    for (const r of curRadios) if (r.checked) return r.value;
-    return 'usd';
-  };
-
-  const toggleUsd = () => {
-    const isUsd = getCurrency() === 'usd';
-    usdRateEl.closest('div').style.display = isUsd ? '' : 'none';
-    shipEl.closest('div').style.display    = isUsd ? '' : 'none';
-  };
-  curRadios.forEach(r => r.addEventListener('change', toggleUsd));
-  toggleUsd();
-
-  const buildQuery = (withPriceParams) => {
-    const q = new URLSearchParams();
-    if (orgEl.value.trim())   q.set('organization_name', orgEl.value.trim());
-    if (storeEl.value.trim()) q.set('store_name',        storeEl.value.trim());
-    if (agentEl.value.trim()) q.set('agent_name',        agentEl.value.trim());
-    q.set('auto_create_products', 'true');
-    q.set('auto_create_agent', 'true');
-
-    const currency = getCurrency();
-    q.set('price_currency', currency);
-    const coef = parseFloat(coefEl.value || '1.6') || 1.6;
-    q.set('coef', String(coef));
-
-    if (withPriceParams && currency === 'usd') {
-      const rate = parseFloat(usdRateEl.value || '');
-      if (!rate) throw new Error('Укажите курс доллара');
-      q.set('usd_rate', String(rate));
-      const ship = parseFloat(shipEl.value || '15') || 15;
-      q.set('shipping_per_kg_usd', String(ship));
-    }
-    return q;
-  };
-
-  const renderPreview = (data) => {
-    resultsEl.style.display = '';
-    debugBox.style.display  = '';
-    summaryEl.textContent = '';
-
-    // сводка
-    const rowsTotal = data?.rows_total ?? data?.count ?? data?.total ?? '';
-    const poFound   = data?.po_matches_found ?? data?.po_matches_count ?? data?.po_found ?? 0;
-    summaryEl.textContent = `Строк: ${rowsTotal || '—'}. Совпадений с заказами поставщика: ${poFound || 0}.`;
-
-    // карты цен и совпадений
-    const norm = (s) => (s ?? '').toString().trim().toLowerCase();
-    const priceMap = new Map();
-    const poMap    = new Map();
-
-    const collectPrices = (arr) => {
-      if (!Array.isArray(arr)) return;
-      for (const x of arr) {
-        const key = norm(x.article ?? x.code ?? x.art);
-        if (!key) continue;
-        const v = x.price_kgs ?? x.kgs ?? x.price;
-        if (v !== undefined && v !== null && !Number.isNaN(+v)) priceMap.set(key, +v);
-      }
-    };
-    collectPrices(data?.calculated_prices);
-    collectPrices(data?.prices);
-    collectPrices(data?.preview_prices);
-
-    const collectPo = (arr) => {
-      if (!Array.isArray(arr)) return;
-      for (const x of arr) {
-        const key = norm(x.article ?? x.code ?? x.art);
-        if (!key) continue;
-        const ok = !!(x.found ?? x.ok ?? x.match ?? x.matched ?? false);
-        poMap.set(key, ok);
-      }
-    };
-    collectPo(data?.po_matches?.items);
-    collectPo(data?.po_matches);
-    collectPo(data?.po_found_list);
-
-    // выбрать базовый список строк
-    let rows = [];
-    const candidates = [
-      data?.preview_rows,
-      data?.rows,
-      data?.items,
-      data?.lines,
-      data?.entries,
-      data?.parsed_rows,
-      data?.table,
-      Array.isArray(data?.will_use_existing) || Array.isArray(data?.will_create)
-        ? [...(data.will_use_existing||[]), ...(data.will_create||[])] : null,
-    ].filter(Boolean);
-
-    if (!candidates.length) {
-      for (const k of Object.keys(data||{})) {
-        const v = data[k];
-        if (Array.isArray(v) && v.some(o => o && (('article' in o) || ('code' in o) || ('name' in o)))) {
-          candidates.push(v);
-        }
-      }
-    }
-    if (candidates.length) {
-      rows = candidates.sort((a,b) => (b?.[0] ? Object.keys(b[0]).length : 0) - (a?.[0] ? Object.keys(a[0]).length : 0))[0];
-    }
-
-    const thead = tableEl.querySelector('thead');
-    const tbody = tableEl.querySelector('tbody');
+  function renderHeader(){
     thead.innerHTML = `
       <tr>
         <th>Артикул (станет code)</th>
         <th>Наименование</th>
+        <th>Кол-во</th>
+        <th>Ед.</th>
+        <th>Цена из файла</th>
+        <th>Вес (кг)</th>
         <th>Цена (KGS)</th>
-        <th>Совпадение в ЗП</th>
+        <th>В ЗП</th>
+        <th>Товар</th>
       </tr>`;
-    tbody.innerHTML = '';
+  }
 
-    const fmt = (v) => (v === undefined || v === null || Number.isNaN(v)) ? '' : v;
+  function chip(ok, yes='найден', no='нет'){return ok?`<span class="chip ok">${yes}</span>`:`<span class="chip no">${no}</span>`}
 
-    for (const r of (rows || [])) {
-      const article = r.article ?? r.code ?? r.art ?? '';
-      const name    = r.name ?? r.title ?? r.productName ?? '';
-      let price     = r.price_kgs ?? r.kgs ?? r.price;
-      if ((price === undefined || price === null || Number.isNaN(+price)) && article) {
-        const p = priceMap.get(norm(article));
-        if (p !== undefined) price = p;
-      }
-      let poHit = r.po_match?.found ?? r.po_found ?? r.found ?? false;
-      if (!poHit && article) poHit = !!poMap.get(norm(article));
-
-      const tr = document.createElement('tr');
+  function renderBody(){
+    tbody.innerHTML='';
+    if (!preview) return;
+    preview.rows.forEach((r, idx)=>{
+      r.__idx = idx;
+      const tr=document.createElement('tr');
       tr.innerHTML = `
-        <td class="mono">${fmt(article)}</td>
-        <td>${fmt(name)}</td>
-        <td class="mono">${fmt(price)}</td>
-        <td><span class="chip ${poHit ? 'ok' : 'no'}">${poHit ? 'найдён' : 'нет'}</span></td>`;
+        <td class="mono">${r.article||''}</td>
+        <td>${r.name||''}</td>
+        <td>${r.qty??''}</td>
+        <td>${r.unit||''}</td>
+        <td>${r.price_raw ?? ''}</td>
+        <td><input type="number" step="0.01" min="0" value="${weights[idx]??''}" data-i="${idx}" style="width:90px"></td>
+        <td class="mono" data-kgs></td>
+        <td>${chip(!!r.po_hit)}</td>
+        <td>${chip(!r.will_create, 'существует', 'создадим')}</td>
+      `;
       tbody.appendChild(tr);
-    }
+    });
+    // пересчёт цен по всем строкам
+    [...tbody.querySelectorAll('tr')].forEach((tr, i)=>{
+      const td=tr.querySelector('[data-kgs]');
+      const val=priceKGS(preview.rows[i]);
+      td.textContent = (val ?? '');
+    });
+    // обработчики веса
+    tbody.querySelectorAll('input[type="number"][data-i]').forEach(inp=>{
+      inp.addEventListener('input', e=>{
+        const i=e.target.getAttribute('data-i');
+        weights[i]=e.target.value;
+        const td=e.target.closest('tr').querySelector('[data-kgs]');
+        const val=priceKGS(preview.rows[i]);
+        td.textContent = (val ?? '');
+      });
+    });
+  }
+  function rerenderAll(){ currency=getCur(); renderBody(); }
+  radios.forEach(r=>r.addEventListener('change', rerenderAll));
+  [usd,coef,ship].forEach(el=>el.addEventListener('input', rerenderAll));
 
-    // сырой JSON (для отладки)
-    debugEl.textContent = JSON.stringify(data, null, 2);
-  };
-
-  const callApi = async (path, withPriceParams, btn) => {
-    try {
-      const file = fileEl.files?.[0];
-      if (!file) { setStatus('Выберите файл.'); return; }
-
-      let q;
-      try { q = buildQuery(withPriceParams); }
-      catch (e) { setStatus(e.message || String(e)); return; }
-
-      const form = new FormData();
-      form.append('file', file);
-
-      setStatus('Загрузка…', true);
-      previewBtn.disabled = true; importBtn.disabled = true;
-
-      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
-      const ct = resp.headers.get('content-type') || '';
-      let data, text;
-
-      if (ct.includes('application/json')) {
-        try { data = await resp.json(); } catch { text = await resp.text(); }
-      } else {
-        text = await resp.text();
+  async function doPreview(){
+    if(!file.files[0]){ status.textContent='Выберите файл'; return; }
+    setLoading(true, previewBtn); status.textContent='';
+    try{
+      const q=new URLSearchParams();
+      if (org.value)   q.set('organization_name', org.value.trim());
+      if (store.value) q.set('store_name', store.value.trim());
+      if (agent.value) q.set('agent_name', agent.value.trim());
+      q.set('auto_create_products','true');
+      q.set('auto_create_agent','true');
+      q.set('price_currency', getCur());
+      q.set('coef', coef.value||'1.6');
+      if (getCur()==='usd'){
+        q.set('usd_rate', usd.value||'');
+        q.set('shipping_per_kg_usd', ship.value||'15');
       }
+      const form=new FormData(); form.append('file', file.files[0]);
+      const resp=await fetch(`/import-invoice-preview/?${q.toString()}`, {method:'POST', body:form});
+      preview=await resp.json();
+      $('results').style.display='block';
+      $('summary').textContent = `Строк: ${preview.rows_total}. Создадим: ${preview.will_create_count}. Уже есть: ${preview.will_use_existing_count}. Совпадений с заказами поставщика: ${preview.rows.filter(r=>r.po_hit).length}.`;
+      currency=getCur(); weights={};
+      renderHeader(); renderBody();
+      status.textContent = resp.ok ? 'Готово' : `Ошибка ${resp.status}`;
+    }catch(e){
+      status.textContent='Ошибка: '+(e.message||e);
+    }finally{ setLoading(false, previewBtn); }
+  }
 
-      if (!resp.ok) {
-        setStatus(`Ошибка ${resp.status}`);
-      } else {
-        setStatus(path.includes('import-invoice-to-supply') ? '✅ Приёмка создана' : 'Готово');
-      }
+  async function doImport(){
+    if(!preview){ status.textContent='Сначала сделайте превью'; return; }
+    if(!file.files[0]){ status.textContent='Выберите файл'; return; }
+    setLoading(true, importBtn); status.textContent='';
+    try{
+      // подготовим client-side цены, чтобы сервер не пересчитывал
+      const prices = {};
+      preview.rows.forEach((r,i)=>{
+        const v = priceKGS(r);
+        if (v!=null) prices[i]=v;
+      });
+      const form=new FormData();
+      form.append('file', file.files[0]);
+      form.append('organization_name', org.value||'');
+      form.append('store_name', store.value||'');
+      form.append('agent_name', agent.value||'');
+      form.append('price_currency', getCur());
+      form.append('coef', coef.value||'1.6');
+      form.append('usd_rate', usd.value||'');
+      form.append('shipping_per_kg_usd', ship.value||'15');
+      form.append('weights', JSON.stringify(weights||{}));
+      form.append('prices_kgs', JSON.stringify(prices||{}));
 
-      if (data) {
-        renderPreview(data);
-      } else {
-        // если пришёл не JSON — всё равно покажем
-        resultsEl.style.display = '';
-        debugBox.style.display  = '';
-        summaryEl.textContent   = 'Ответ не JSON, смотрите «Технические детали».';
-        tableEl.querySelector('thead').innerHTML = '';
-        tableEl.querySelector('tbody').innerHTML = '';
-        debugEl.textContent = text || '(пусто)';
-      }
-    } catch (err) {
-      setStatus('Сетевая ошибка: ' + (err?.message || err));
-    } finally {
-      previewBtn.disabled = false; importBtn.disabled = false;
-    }
-  };
+      const resp=await fetch('/import-invoice-to-supply/', {method:'POST', body:form});
+      const data=await resp.json();
+      status.textContent = resp.ok ? 'Приёмка создана' : `Ошибка ${resp.status}`;
+      if (!resp.ok) console.warn(data);
+    }catch(e){
+      status.textContent='Ошибка: '+(e.message||e);
+    }finally{ setLoading(false, importBtn); }
+  }
 
-  previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', true, previewBtn));
-  importBtn .addEventListener('click', () => callApi('/import-invoice-to-supply/', true, importBtn));
-
-  console.log('UI loaded ✅');
+  previewBtn.addEventListener('click', doPreview);
+  importBtn.addEventListener('click', doImport);
 })();
 </script>
 </body>
