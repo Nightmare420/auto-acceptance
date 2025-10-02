@@ -6,6 +6,7 @@ import base64
 import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+from fastapi import Form
 
 import httpx
 import numpy as np
@@ -346,25 +347,28 @@ async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional
 @app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
 async def import_invoice_to_supply(
     file: UploadFile = File(...),
-    organization_name: Optional[str] = None,
-    store_name: Optional[str] = None,
-    agent_name: Optional[str] = None,
-    moment: Optional[str] = None,
-    name: Optional[str] = None,
-    vat_enabled: bool = True,
-    vat_included: bool = True,
-    auto_create_products: bool = True,
-    auto_create_agent: bool = True,
 
-    # те же ценовые параметры, что и в превью
-    price_currency: str = "usd",
-    coef: float = 1.6,
-    usd_rate: Optional[float] = None,
-    shipping_per_kg_usd: Optional[float] = 15.0,
+    # 👇 вот так — читаем из формы (и из query тоже будет работать)
+    organization_name: Optional[str] = Form(None),
+    store_name: Optional[str] = Form(None),
+    agent_name: Optional[str] = Form(None),
 
-    # от фронта: веса по строкам и (опционально) уже пересчитанные цены в сомах
-    weights: Optional[str] = Form(None),          # JSON-строка: {"0": 0.3, "1": 1.2, ...}
-    prices_kgs: Optional[str] = Form(None),       # JSON-строка: {"0": 1234, "1": 550, ...} в сомах
+    moment: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
+    vat_enabled: bool = Form(True),
+    vat_included: bool = Form(True),
+
+    auto_create_products: bool = Form(True),
+
+    # ценовые настройки тоже читаем из формы (на случай если фронт шлёт их так)
+    price_currency: str = Form("usd"),
+    coef: float = Form(1.6),
+    usd_rate: Optional[float] = Form(None),
+    shipping_per_kg_usd: Optional[float] = Form(15.0),
+
+    # от фронта: веса и цены
+    weights: Optional[str] = Form(None),
+    prices_kgs: Optional[str] = Form(None),
 ):
     import json
 
