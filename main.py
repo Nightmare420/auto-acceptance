@@ -344,7 +344,7 @@ async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional
 
     return refs, created_agent
 
-@@app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
+@app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
 async def import_invoice_to_supply(
     file: UploadFile = File(...),
 
