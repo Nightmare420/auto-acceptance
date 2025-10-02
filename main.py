@@ -10,15 +10,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 import numpy as np
 import pandas as pd
-from decimal import Decimal, ROUND_HALF_UP
-
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from decimal import Decimal, ROUND_HALF_UP
 
-# -------------------- ENV --------------------
+# ---------- ENV ----------
 MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
 MS_LOGIN = os.environ.get("MS_LOGIN")
 MS_PASSWORD = os.environ.get("MS_PASSWORD")
@@ -34,7 +33,7 @@ def ms_headers() -> Dict[str, str]:
         "Accept-Encoding": "gzip",
     }
 
-# -------------------- UTILS --------------------
+# ---------- UTILS ----------
 def _norm(s: Optional[str]) -> str:
     if s is None:
         return ""
@@ -56,7 +55,7 @@ async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str
     r.raise_for_status()
     return r
 
-# -------------------- EXCEL --------------------
+# ---------- EXCEL ----------
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     ext = Path(filename).suffix.lower()
     engine = "openpyxl" if ext == ".xlsx" else ("xlrd" if ext == ".xls" else None)
@@ -72,7 +71,7 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
             header_row_idx = i
             break
     if header_row_idx is None:
-        raise HTTPException(400, "Не удалось найти строку заголовков (нужны колонки «Артикул» и «Цена»).")
+        raise HTTPException(400, "Не удалось найти строку заголовков (нужны «Артикул» и «Цена»).")
 
     header_row = raw.iloc[header_row_idx]
     name2col = {str(v).strip(): c for c, v in header_row.items() if pd.notna(v)}
@@ -114,11 +113,8 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
 
-# -------------------- MS lookups --------------------
+# ---------- MS lookups ----------
 async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) -> Dict[str, Dict[str,Any]]:
-    """
-    Возвращает {code_lower: {'meta':..., 'id':...}} для существующих товаров.
-    """
     out: Dict[str, Dict[str,Any]] = {}
     for code in {c for c in (c.strip() for c in codes) if c}:
         url = f"{MS_API}/entity/product"
@@ -129,14 +125,21 @@ async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) 
         await asyncio.sleep(0.05)
     return out
 
-async def fetch_po_codes_for_agent(client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90) -> Set[str]:
+async def fetch_po_codes_for_agent_with_details(
+    client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
+) -> Tuple[Set[str], Dict[str, List[Dict[str, Any]]]]:
     """
-    Собираем все assortment.code из заказов поставщику по агенту за последние days дней.
+    Возвращает:
+      codes: множество всех кодов из ЗП
+      details: { code_lower: [ {po_id, po_name, po_href, qty}, ... ] }
     """
     codes: Set[str] = set()
+    details: Dict[str, List[Dict[str, Any]]] = {}
+
     agent_meta = None
     if agent_name:
-        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty", params={"search": agent_name, "limit": 1})
+        url = f"{MS_API}/entity/counterparty"
+        r = await _request_with_backoff(client, "GET", url, params={"search": agent_name, "limit": 1})
         rows = r.json().get("rows", [])
         if rows:
             agent_meta = rows[0]["meta"]
@@ -158,16 +161,33 @@ async def fetch_po_codes_for_agent(client: httpx.AsyncClient, agent_name: Option
                     continue
             except Exception:
                 pass
+
+            po_id = row.get("id")
+            po_name = row.get("name")
+            po_href = row.get("meta", {}).get("uuidHref")
+
             for p in (row.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
                 code = a.get("code")
-                if code:
-                    codes.add(_norm_low(code))
+                if not code:
+                    continue
+                code_key = _norm_low(code)
+                codes.add(code_key)
+
+                qty = float(p.get("quantity") or 0)
+                details.setdefault(code_key, []).append({
+                    "po_id": po_id,
+                    "po_name": po_name,
+                    "po_href": po_href,
+                    "qty": qty,
+                })
+
         next_href = data.get("meta", {}).get("nextHref")
         await asyncio.sleep(0.05)
-    return codes
 
-# -------------------- PRICE --------------------
+    return codes, details
+
+# ---------- PRICE ----------
 def calc_price_kgs(
     price_raw: Optional[float],
     currency_ui: str,
@@ -178,8 +198,7 @@ def calc_price_kgs(
 ) -> Optional[float]:
     """
     USD: (price * coef + weight * shipping_per_kg_usd) * usd_rate
-    KGS: price * coef   (курс и доставка игнорируются)
-    Возвращаем число в сомах, округлённое до 0.01 сом по правилу 0.5 вверх.
+    KGS: price * coef
     """
     try:
         p = float(price_raw)
@@ -195,12 +214,12 @@ def calc_price_kgs(
         ship = float(shipping_per_kg_usd or 0.0)
         w = float(weight_kg or 0.0)
         kgs = (p * c + w * ship) * r
-    else:
-        kgs = p * c
+        return float(Decimal(str(kgs)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
+    kgs = p * c
     return float(Decimal(str(kgs)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
-# -------------------- API & MODELS --------------------
+# ---------- API ----------
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -243,15 +262,18 @@ async def import_invoice_preview(
 
     rows: List[PreviewRow] = []
     po_codes: Set[str] = set()
+    po_details: Dict[str, List[Dict[str, Any]]] = {}
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
         # товары по code=article
         codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # коды из заказов поставщику (если указан агент)
+        # коды + детали ЗП
         if agent_name:
-            po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
+            po_codes, po_details = await fetch_po_codes_for_agent_with_details(client, agent_name, po_days)
+
+        po_matches_table: List[Dict[str, Any]] = []
 
         for _, r in df.iterrows():
             article = _norm(r["article"])
@@ -266,7 +288,7 @@ async def import_invoice_preview(
             will_create = not bool(found)
             po_hit = code_key in po_codes
 
-            # без веса (0) — фронт пересчитает после ввода веса
+            # цена без веса (0) — фронт пересчитает после ввода веса
             price_kgs = calc_price_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
 
             rows.append(PreviewRow(
@@ -276,12 +298,22 @@ async def import_invoice_preview(
                 product_id=product_id, will_create=will_create, po_hit=po_hit
             ))
 
+            if po_hit:
+                po_rows = po_details.get(code_key) or []
+                po_matches_table.append({
+                    "article": article,
+                    "name": name,
+                    "qty_in_file": qty,
+                    "orders": po_rows,  # [{po_id, po_name, po_href, qty}]
+                })
+
     return {
         "rows_total": len(rows),
         "po_agent": agent_name,
         "will_create_count": sum(1 for x in rows if x.will_create),
         "will_use_existing_count": sum(1 for x in rows if not x.will_create),
         "rows": [r.model_dump() for r in rows],
+        "po_matches": po_matches_table,  # 👈 новый раздел для фронта
         "note": "Вес вводится на фронте; цена в KGS пересчитывается локально по формуле.",
     }
 
@@ -294,15 +326,8 @@ class SupplyCreateResponse(BaseModel):
     will_use_existing: List[Dict[str, Any]] = []
     supply_meta: Dict[str, Any]
 
-async def resolve_refs(
-    client: httpx.AsyncClient,
-    *,
-    organization_name: Optional[str],
-    store_name: Optional[str],
-    agent_name: Optional[str],
-    auto_create_agent: bool,
-) -> Tuple[Dict[str, Dict[str, Any]], bool]:
-
+async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional[str], store_name: Optional[str],
+                       agent_name: Optional[str], auto_create_agent: bool) -> Tuple[Dict[str, Dict[str, Any]], bool]:
     def meta_from(entity: str, href: str) -> Dict[str, Any]:
         return {"meta": {"href": href, "type": entity, "mediaType": "application/json"}}
 
@@ -349,7 +374,7 @@ async def resolve_refs(
 async def import_invoice_to_supply(
     file: UploadFile = File(...),
 
-    # из формы (или query)
+    # читаем из формы (или из query — FastAPI тоже подхватит)
     organization_name: Optional[str] = Form(None),
     store_name: Optional[str] = Form(None),
     agent_name: Optional[str] = Form(None),
@@ -413,11 +438,11 @@ async def import_invoice_to_supply(
             auto_create_agent=auto_create_agent,
         )
 
-        # товары по коду = артикулу
+        # заранее найдём товары по коду = артикулу
         codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # формируем позиции
+        # сформируем позиции для Приёмки
         for idx, r in df.iterrows():
             article = _norm(r["article"])
             name_row = _norm(r.get("name")) or article
@@ -426,26 +451,31 @@ async def import_invoice_to_supply(
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
-
-            # ВСЕГДА работаем с самой meta (dict) и ниже кладём {"meta": product_meta}
-            product_meta: Optional[Dict[str, Any]] = None
+            meta = None
 
             if found:
-                product_meta = found["meta"]
-                will_use_existing.append({"article": article, "name": name_row, "product_id": found["id"]})
+                meta = found["meta"]
+                will_use_existing.append({
+                    "article": article,
+                    "name": name_row,
+                    "product_id": found["id"],
+                })
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                payload_product = {"name": name_row, "code": article}
-                # единица измерения — возьмём первую попавшуюся
+                # создаём товар (code = article)
+                payload_product = {
+                    "name": name_row,
+                    "code": article,
+                }
+                # единица измерения — возьмём любую первую
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
                     payload_product["uom"] = {"meta": rows_u[0]["meta"]}
-                rc = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
-                rc.raise_for_status()
-                product_meta = rc.json().get("meta")
+                r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
+                meta = {"meta": r_c.json()["meta"]}
                 created_products.append(article)
                 will_create.append({"article": article, "name": name_row})
 
@@ -455,12 +485,14 @@ async def import_invoice_to_supply(
             if price_client is not None and price_client >= 0:
                 price_kgs = price_client
             else:
-                price_kgs = calc_price_kgs(price_raw, price_currency, coef, usd_rate, shipping_per_kg_usd, weight) or 0.0
+                price_kgs = calc_price_kgs(price_raw, price_currency, coef, usd_rate, shipping_per_kg_usd, weight)
+                if price_kgs is None:
+                    price_kgs = 0.0
 
             pos = {
-                "assortment": {"meta": product_meta},                 # <- единый формат!
+                "assortment": meta,
                 "quantity": qty,
-                "price": int(round(float(price_kgs) * 100)),          # цена в копейках
+                "price": int(round(float(price_kgs) * 100)),  # цена в копейках
             }
             positions.append(pos)
 
