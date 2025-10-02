@@ -344,11 +344,11 @@ async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional
 
     return refs, created_agent
 
-@app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
+@@app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
 async def import_invoice_to_supply(
     file: UploadFile = File(...),
 
-    # 👇 вот так — читаем из формы (и из query тоже будет работать)
+    # читаем из формы (или из query — FastAPI тоже подхватит)
     organization_name: Optional[str] = Form(None),
     store_name: Optional[str] = Form(None),
     agent_name: Optional[str] = Form(None),
@@ -359,17 +359,19 @@ async def import_invoice_to_supply(
     vat_included: bool = Form(True),
 
     auto_create_products: bool = Form(True),
+    auto_create_agent: bool = Form(True),   # ← ЭТОТ параметр обязателен, иначе NameError
 
-    # ценовые настройки тоже читаем из формы (на случай если фронт шлёт их так)
+    # ценовые настройки
     price_currency: str = Form("usd"),
     coef: float = Form(1.6),
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
 
-    # от фронта: веса и цены
-    weights: Optional[str] = Form(None),
-    prices_kgs: Optional[str] = Form(None),
+    # данные от фронта
+    weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
+    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...}
 ):
+    ...
     import json
 
     df = read_invoice_excel(file.file, file.filename)
