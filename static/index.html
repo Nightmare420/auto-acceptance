@@ -27,11 +27,7 @@
     .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
     .chip.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
     .chip.no{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
-    .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;margin-left:8px}
-    @keyframes spin{to{transform:rotate(360deg)}}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -41,23 +37,21 @@
   <div class="card grid grid-3">
     <div><label>Организация</label><input id="org" type="text" placeholder="West-parts"></div>
     <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад"></div>
-    <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay"></div>
+    <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay / Тестовый"></div>
   </div>
 
-  <div class="card grid grid-2">
+  <div class="card grid grid-3">
     <div>
       <label>Валюта</label>
       <div class="radio-group">
         <label><input type="radio" name="currency" value="usd" checked> Доллар</label>
         <label><input type="radio" name="currency" value="kgs"> Сом</label>
       </div>
-      <p class="muted" style="margin:6px 0 0">Если в файле есть «Валюта», она приоритетнее переключателя.</p>
+      <p class="muted" style="margin:6px 0 0">Если в файле есть колонка «Валюта», она приоритетнее переключателя.</p>
     </div>
-    <div class="grid grid-3">
-      <div id="usdWrap"><label>Курс $</label><input id="usdRate" type="number" step="0.0001" min="0" placeholder="например, 87"></div>
-      <div><label>Коэффициент</label><input id="coef" type="number" step="0.01" min="0" value="1.6"></div>
-      <div id="shipWrap"><label>Доставка $/кг</label><input id="ship" type="number" step="0.01" min="0" value="15"></div>
-    </div>
+    <div><label>Курс $</label><input id="usdRate" type="number" step="0.0001" min="0" placeholder="например, 87"></div>
+    <div><label>Коэффициент</label><input id="coef" type="number" step="0.01" min="0" value="1.6"></div>
+    <div><label>Доставка $/кг</label><input id="ship" type="number" step="0.01" min="0" value="15"></div>
   </div>
 
   <div class="card">
@@ -75,24 +69,41 @@
     </div>
   </div>
 
+  <!-- Результаты -->
   <div class="card" id="results" style="display:none">
     <h3>Результаты</h3>
     <div id="summary" class="muted" style="margin:8px 0 12px"></div>
     <div style="overflow:auto">
-      <table id="table"><thead></thead><tbody></tbody></table>
+      <table id="mainTable">
+        <thead>
+          <tr>
+            <th>Артикул (станет code)</th>
+            <th>Наименование (файл)</th>
+            <th>Кол-во</th>
+            <th>Ед.</th>
+            <th>Цена из файла</th>
+            <th>Вес (кг)</th>
+            <th>Цена (KGS)</th>
+            <th>В ЗП</th>
+            <th>Товар</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
     </div>
   </div>
 
-  <!-- НОВОЕ: блок совпадений с заказами поставщика -->
-  <div class="card" id="poMatchesCard" style="display:none">
+  <!-- Совпадения с ЗП -->
+  <div class="card" id="poMatches" style="display:none">
     <h3>Совпадения с заказами поставщика</h3>
-    <div id="poMatchesNote" class="muted" style="margin:6px 0 10px"></div>
+    <div id="poSummary" class="muted" style="margin:6px 0 10px"></div>
     <div style="overflow:auto">
-      <table id="poMatchesTable">
+      <table id="poTable">
         <thead>
           <tr>
             <th>Артикул</th>
-            <th>Наименование</th>
+            <th>Наименование (файл)</th>
+            <th>Наименование (МС)</th>
             <th>Заказы</th>
             <th>Кол-во в ЗП</th>
           </tr>
@@ -102,12 +113,6 @@
     </div>
   </div>
 
-  <div class="card" id="debugBox" style="display:none">
-    <details>
-      <summary>Технические детали (JSON)</summary>
-      <pre id="debug" class="mono" style="white-space:pre-wrap"></pre>
-    </details>
-  </div>
 </div>
 
 <script>
@@ -121,12 +126,10 @@
   const coefEl    = $('coef');
   const shipEl    = $('ship');
   const fileEl    = $('file');
+  const statusEl  = $('status');
 
   const previewBtn = $('previewBtn');
   const importBtn  = $('importBtn');
-  const statusEl   = $('status');
-  const debugBox   = $('debugBox');
-  const debugEl    = $('debug');
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
@@ -134,163 +137,133 @@
     for (const r of curRadios) if (r.checked) return r.value;
     return 'usd';
   }
-  function toggleUsd() {
-    const isUsd = getCur() === 'usd';
-    $('usdWrap').style.display = isUsd ? '' : 'none';
-    $('shipWrap').style.display = isUsd ? '' : 'none';
-  }
-  curRadios.forEach(r => r.addEventListener('change', toggleUsd));
-  toggleUsd();
 
-  function setLoading(is, btn) {
-    if (btn) {
-      if (is) {
-        btn.dataset.text = btn.textContent;
-        btn.textContent = 'Загрузка…';
-        btn.disabled = true;
-      } else {
-        btn.textContent = btn.dataset.text || btn.textContent;
-        btn.disabled = false;
-      }
-    }
-    if (is) statusEl.innerHTML = 'Идёт запрос <span class="spinner"></span>';
-    else statusEl.textContent = '';
-  }
-
-  function buildQuery({withPriceParams}) {
+  function qParams(withPrice) {
     const q = new URLSearchParams();
-    if (orgEl.value.trim())   q.set('organization_name', orgEl.value.trim());
-    if (storeEl.value.trim()) q.set('store_name', storeEl.value.trim());
-    if (agentEl.value.trim()) q.set('agent_name', agentEl.value.trim());
-
+    if (orgEl.value)   q.set('organization_name', orgEl.value.trim());
+    if (storeEl.value) q.set('store_name',        storeEl.value.trim());
+    if (agentEl.value) q.set('agent_name',        agentEl.value.trim());
     q.set('auto_create_products', 'true');
     q.set('auto_create_agent', 'true');
-
-    const currency = getCur();
-    q.set('price_currency', currency);
-    q.set('coef', String(parseFloat(coefEl.value || '1.6')));
-
-    if (withPriceParams && currency === 'usd') {
+    q.set('price_currency', getCur());
+    q.set('coef', String(parseFloat(coefEl.value || '1.6') || 1.6));
+    if (withPrice && getCur()==='usd') {
       const rate = parseFloat(usdRateEl.value || '');
       if (!rate) throw new Error('Укажите курс доллара');
       q.set('usd_rate', String(rate));
-      q.set('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15')));
+      q.set('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15') || 0));
     }
     return q;
   }
 
-  function renderPoMatches(data) {
-    const card = $('poMatchesCard');
-    const note = $('poMatchesNote');
-    const tbody = document.querySelector('#poMatchesTable tbody');
-    if (!card || !tbody) return;
-
-    tbody.innerHTML = '';
-    const items = Array.isArray(data.po_matches) ? data.po_matches : [];
-    if (!items.length) {
-      card.style.display = 'none';
-      return;
+  function setLoading(btn, is) {
+    if (btn) {
+      btn.disabled = !!is;
+      if (is) { btn.dataset.t = btn.textContent; btn.textContent = 'Загрузка…'; }
+      else    { btn.textContent = btn.dataset.t || btn.textContent; }
     }
-
-    note.textContent = `Найдено совпадений: ${items.length}`;
-
-    for (const it of items) {
-      const tr = document.createElement('tr');
-
-      const tdA = document.createElement('td');
-      tdA.textContent = it.article || '';
-
-      const tdN = document.createElement('td');
-      tdN.textContent = it.name || '';
-
-      const tdOrders = document.createElement('td');
-      if (Array.isArray(it.orders) && it.orders.length) {
-        for (let i = 0; i < it.orders.length; i++) {
-          const o = it.orders[i];
-          const a = document.createElement('a');
-          a.href = o.po_href || '#';
-          a.target = '_blank';
-          a.rel = 'noopener';
-          a.textContent = o.po_name || '(без названия)';
-          tdOrders.appendChild(a);
-          if (i < it.orders.length - 1) tdOrders.appendChild(document.createTextNode(', '));
-        }
-      } else {
-        tdOrders.textContent = '—';
-      }
-
-      const tdQty = document.createElement('td');
-      const sumQty = (it.orders || []).reduce((s, o) => s + (o.qty || 0), 0);
-      tdQty.textContent = String(sumQty);
-
-      tr.appendChild(tdA);
-      tr.appendChild(tdN);
-      tr.appendChild(tdOrders);
-      tr.appendChild(tdQty);
-      tbody.appendChild(tr);
-    }
-
-    card.style.display = '';
+    if (btn !== previewBtn) previewBtn.disabled = !!is;
+    if (btn !== importBtn)  importBtn.disabled = !!is;
   }
 
-  async function callApi(path, btn, withPriceParams) {
+  async function callApi(path, btn) {
+    const f = fileEl.files?.[0];
+    if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
+
+    let q; try { q = qParams(true); } catch(e){ statusEl.textContent = e.message; return; }
+
+    const form = new FormData(); form.append('file', f);
+
+    setLoading(btn, true); statusEl.textContent = '';
+    let data;
     try {
-      const f = fileEl.files[0];
-      if (!f) {
-        alert('Выберите файл.');
-        return;
-      }
-
-      const q = buildQuery({withPriceParams});
-      const form = new FormData();
-      form.append('file', f);
-
-      setLoading(true, btn);
-      const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
-
+      const resp = await fetch(`${path}?${q.toString()}`, { method:'POST', body: form });
       const ct = resp.headers.get('content-type') || '';
-      let data = null, text = null;
-
-      if (ct.includes('application/json')) {
-        data = await resp.json();
-      } else {
-        text = await resp.text();
-      }
-
-      if (!resp.ok) {
-        const msg = data?.detail || data?.error || text || `HTTP ${resp.status}`;
-        statusEl.textContent = `Ошибка: ${msg}`;
-      } else {
-        statusEl.textContent = path.includes('import-invoice-to-supply')
-          ? '✅ Документ Приёмки создан.'
-          : '✅ Превью готово.';
-      }
-
-      // покажем JSON для отладки
-      if (data) {
-        debugEl.textContent = JSON.stringify(data, null, 2);
-        debugBox.style.display = '';
-        // нарисуем блок совпадений с ЗП
-        renderPoMatches(data);
-        // покажем краткую шапку
-        $('results').style.display = '';
-        $('summary').textContent = `Строк: ${data.rows_total ?? 0}. Будут созданы: ${data.will_create_count ?? 0}. Найдены в МС: ${data.will_use_existing_count ?? 0}.`;
-      } else {
-        debugEl.textContent = text ?? '(пусто)';
-        debugBox.style.display = '';
-      }
+      data = ct.includes('json') ? await resp.json() : {error: await resp.text()};
+      if (!resp.ok) throw data;
     } catch (e) {
       console.error(e);
-      statusEl.textContent = 'Сетевая ошибка: ' + (e?.message || e);
-    } finally {
-      setLoading(false, btn);
+      statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
+      setLoading(btn,false);
+      return;
+    }
+    setLoading(btn,false);
+
+    if (path.includes('preview')) {
+      renderMainTable(data.rows || []);
+      renderPoMatches(data.rows || [], data.po_matches || []);
+      $('results').style.display = '';
+      $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
+      $('summary').textContent = `Строк: ${data.rows_total}. Создадим: ${data.will_create_count}. Уже есть: ${data.will_use_existing_count}. Совпадений с заказами поставщика: ${(data.po_matches||[]).length}.`;
+      statusEl.textContent = '';
+    } else {
+      statusEl.textContent = 'Готово. Документ Приёмки создан.';
     }
   }
 
-  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn, true));
-  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn, true));
+  // ----- отрисовка основной таблицы -----
+  function renderMainTable(rows) {
+    const tb = document.querySelector("#mainTable tbody");
+    tb.innerHTML = "";
+    rows.forEach((r, idx) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${r.article || ""}</td>
+        <td>${(r.name || "").replaceAll("<","&lt;")}</td>
+        <td>${r.qty ?? ""}</td>
+        <td>${r.unit || ""}</td>
+        <td>${r.price_raw ?? ""}</td>
+        <td><input type="number" min="0" step="0.001" class="weightInput" data-row="${idx}" style="width:90px"/></td>
+        <td class="priceKgs" data-row="${idx}">${r.price_kgs != null ? r.price_kgs : ""}</td>
+        <td>${r.po_hit ? '<span class="chip ok">есть</span>' : '<span class="chip no">нет</span>'}</td>
+        <td>${r.will_create ? '<span class="chip no">создадим</span>' : '<span class="chip ok">существует</span>'}</td>
+      `;
+      tb.appendChild(tr);
+    });
+  }
 
-  console.log('UI ready');
+  // ----- отрисовка совпадений ЗП -----
+  function renderPoMatches(previewRows, poMatches) {
+    const box = document.getElementById("poMatches");
+    const sum = document.getElementById("poSummary");
+    const tb  = document.querySelector("#poTable tbody");
+
+    if (!poMatches || !poMatches.length) {
+      box.style.display = "none"; return;
+    }
+
+    const nameByCode = {};
+    previewRows.forEach(r => { if (r.article) nameByCode[r.article.toLowerCase()] = r.name || ""; });
+
+    tb.innerHTML = "";
+    poMatches.forEach(m => {
+      const code = (m.article || "").toString();
+      const nameFile = nameByCode[code.toLowerCase()] || "";
+      const nameMs = m.name_from_ms || "";
+      const orders = (m.orders || []).map(o => {
+        const num = o.number || "";
+        const href = o.href || "#";
+        return `<a href="${href}" target="_blank">${num}</a>`;
+      }).join(", ");
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${code}</td>
+        <td>${nameFile.replaceAll("<","&lt;")}</td>
+        <td>${nameMs.replaceAll("<","&lt;")}</td>
+        <td>${orders}</td>
+        <td>${m.qty_in_po ?? 0}</td>
+      `;
+      tb.appendChild(tr);
+    });
+
+    sum.textContent = `Найдено совпадений: ${poMatches.length}`;
+    box.style.display = "";
+  }
+
+  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn));
+  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn));
+
 })();
 </script>
 </body>
