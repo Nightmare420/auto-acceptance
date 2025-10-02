@@ -15,12 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from decimal import Decimal, ROUND_HALF_UP
 
 # ---------- ENV ----------
 MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
 MS_LOGIN = os.environ.get("MS_LOGIN")
 MS_PASSWORD = os.environ.get("MS_PASSWORD")
-MANUFACTURER_ATTR_NAME = "Производитель"  # не используется в логике сопоставления
+MANUFACTURER_ATTR_NAME = "Производитель"
 
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
@@ -168,17 +169,41 @@ async def fetch_po_codes_for_agent(client: httpx.AsyncClient, agent_name: Option
     return codes
 
 # ---------- PRICE ----------
-def calc_price_kgs(price_raw: Optional[float], currency_ui: str, coef: float,
-                   usd_rate: Optional[float], shipping_per_kg_usd: Optional[float],
-                   weight_kg: float) -> Optional[float]:
-    if price_raw is None or (isinstance(price_raw, float) and np.isnan(price_raw)):
+from decimal import Decimal, ROUND_HALF_UP
+
+def calc_price_kgs(
+    price_raw: Optional[float],
+    currency_ui: str,
+    coef: float,
+    usd_rate: Optional[float],
+    shipping_per_kg_usd: Optional[float],
+    weight_kg: float,
+) -> Optional[float]:
+    """
+    USD: (price * coef + weight * shipping_per_kg_usd) * usd_rate
+    KGS: price * coef   (курс и доставка игнорируются)
+    Возвращаем число в сомах, округлённое до 0.01 сом по правилу 0.5 вверх.
+    """
+    try:
+        p = float(price_raw)
+    except (TypeError, ValueError):
         return None
-    if currency_ui == "usd":
-        if not usd_rate:
-            return None
-        return float((price_raw * coef + weight_kg * (shipping_per_kg_usd or 0.0)) * usd_rate)
-    else:
-        return float(price_raw * coef)
+    if np.isnan(p):
+        return None
+
+    c = float(coef or 1.0)
+
+    if (currency_ui or "").lower() == "usd":
+        r = float(usd_rate or 0.0)
+        ship = float(shipping_per_kg_usd or 0.0)
+        w = float(weight_kg or 0.0)
+        kgs = (p * c + w * ship) * r
+        return float(Decimal(str(kgs)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+    # ---- KGS ветка: только price * coef ----
+    kgs = p * c
+    return float(Decimal(str(kgs)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
 
 # ---------- API ----------
 app = FastAPI()
