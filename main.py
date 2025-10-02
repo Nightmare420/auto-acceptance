@@ -359,7 +359,7 @@ async def import_invoice_to_supply(
     vat_included: bool = Form(True),
 
     auto_create_products: bool = Form(True),
-    auto_create_agent: bool = Form(True),   # ← ЭТОТ параметр обязателен, иначе NameError
+    auto_create_agent: bool = Form(True),
 
     # ценовые настройки
     price_currency: str = Form("usd"),
@@ -371,7 +371,6 @@ async def import_invoice_to_supply(
     weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
     prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...}
 ):
-    ...
     import json
 
     df = read_invoice_excel(file.file, file.filename)
@@ -382,8 +381,8 @@ async def import_invoice_to_supply(
     weights_map: Dict[int, float] = {}
     if weights:
         try:
-            tmp = json.loads(weights)
-            for k, v in (tmp or {}).items():
+            tmp = json.loads(weights) or {}
+            for k, v in tmp.items():
                 weights_map[int(k)] = float(v or 0)
         except Exception:
             pass
@@ -391,8 +390,8 @@ async def import_invoice_to_supply(
     prices_map: Dict[int, float] = {}
     if prices_kgs:
         try:
-            tmp = json.loads(prices_kgs)
-            for k, v in (tmp or {}).items():
+            tmp = json.loads(prices_kgs) or {}
+            for k, v in tmp.items():
                 prices_map[int(k)] = float(v or 0)
         except Exception:
             pass
@@ -404,20 +403,23 @@ async def import_invoice_to_supply(
     positions: List[Dict[str, Any]] = []
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        refs, created_agent = await resolve_refs(client,
-            organization_name=organization_name, store_name=store_name,
-            agent_name=agent_name, auto_create_agent=auto_create_agent
+        # ссылки на организацию/склад/контрагента (создадим контрагента при необходимости)
+        refs, created_agent = await resolve_refs(
+            client,
+            organization_name=organization_name,
+            store_name=store_name,
+            agent_name=agent_name,
+            auto_create_agent=auto_create_agent,
         )
 
-        # товары
-        codes = { _norm(r["article"]) for _, r in df.iterrows() }
+        # заранее найдём товары по коду = артикулу
+        codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # находим/создаём товары по code==article
+        # сформируем позиции для Приёмки
         for idx, r in df.iterrows():
             article = _norm(r["article"])
             name_row = _norm(r.get("name")) or article
-            unit_hint = _norm(r.get("unit"))
             qty = float(r.get("qty") or 0)
             price_raw = r.get("price")
 
@@ -427,29 +429,33 @@ async def import_invoice_to_supply(
 
             if found:
                 meta = found["meta"]
-                will_use_existing.append({"article": article, "name": name_row, "product_id": found["id"]})
+                will_use_existing.append({
+                    "article": article,
+                    "name": name_row,
+                    "product_id": found["id"],
+                })
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                # создаём товар с code=article
-                payload = {
+                # создаём товар (code = article)
+                payload_product = {
                     "name": name_row,
                     "code": article,
                 }
-                # uom — возьмём любую (первую) если нужна
+                # единица измерения — возьмём любую первую
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
-                    payload["uom"] = {"meta": rows_u[0]["meta"]}
-                r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload)
+                    payload_product["uom"] = {"meta": rows_u[0]["meta"]}
+                r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
                 meta = {"meta": r_c.json()["meta"]}
                 created_products.append(article)
                 will_create.append({"article": article, "name": name_row})
 
-            # цена
+            # цена позиции
             weight = float(weights_map.get(idx, 0.0))
-            price_client = prices_map.get(idx)  # если фронт прислал готовую KGS
+            price_client = prices_map.get(idx)  # если фронт прислал готовую цену в сомах
             if price_client is not None and price_client >= 0:
                 price_kgs = price_client
             else:
@@ -457,32 +463,60 @@ async def import_invoice_to_supply(
                 if price_kgs is None:
                     price_kgs = 0.0
 
-            pos = {"assortment": meta, "quantity": qty}
-            try:
-                pos["price"] = int(round(float(price_kgs) * 100))  # копейки
-            except Exception:
-                pos["price"] = 0
+            pos = {
+                "assortment": meta,
+                "quantity": qty,
+                "price": int(round(float(price_kgs) * 100)),  # цена в копейках
+            }
             positions.append(pos)
 
         if not positions:
             raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
 
-        payload: Dict[str, Any] = {
+        payload_supply: Dict[str, Any] = {
             "applicable": True,
             "vatEnabled": bool(vat_enabled),
             "vatIncluded": bool(vat_included),
             **refs,
             "positions": positions,
         }
-        if name is not None and str(name).strip():
-            payload["name"] = str(name).strip()
-        if moment is not None and str(moment).strip():
-            payload["moment"] = str(moment).strip()
+        if name and str(name).strip():
+            payload_supply["name"] = str(name).strip()
+        if moment and str(moment).strip():
+            payload_supply["moment"] = str(moment).strip()
 
-        r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/supply", json=payload)
+        # --- создаём Приёмку
+        url = f"{MS_API}/entity/supply"
+        r = await _request_with_backoff(client, "POST", url, json=payload_supply)
+
+        # права
         if r.status_code in (401, 403):
-            raise HTTPException(r.status_code, "Нет доступа к API МойСклад")
-        r.raise_for_status()
+            raise HTTPException(r.status_code, detail="Нет доступа к API МойСклад")
+
+        # показать причину 4xx/5xx
+        if r.status_code >= 400:
+            msg = None
+            try:
+                body = r.json()
+                if isinstance(body, dict):
+                    errs = body.get("errors") or []
+                    if errs:
+                        parts = []
+                        for e in errs:
+                            txt = e.get("error") or e.get("message") or "Ошибка"
+                            if e.get("code"):
+                                txt += f" (code {e['code']})"
+                            parts.append(txt)
+                        msg = "; ".join(parts)
+                    elif body.get("message"):
+                        msg = body["message"]
+            except Exception:
+                pass
+            if not msg:
+                msg = r.text
+            raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
+
+        # успех
         supply = r.json()
 
     return SupplyCreateResponse(
