@@ -339,8 +339,9 @@ async def import_invoice_preview(
         prod_cache = await prefetch_products_by_code(client, codes)
 
         # --- ДОБАВЛЕНО: строим индекс ЗП для агента ---
-        if agent_name:
-            po_index = await fetch_po_index_for_agent(client, agent_name, po_days)
+    po_codes: Set[str] = set()
+    if agent_name:
+        po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
         # ------------------------------------------------
 
         for _, r in df.iterrows():
