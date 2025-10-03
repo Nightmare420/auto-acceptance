@@ -178,7 +178,15 @@ async def fetch_po_index_for_agent(
         v["orders"] = sorted(v["orders"])
     return out
 # --- КОНЕЦ добавления ---
-
+async def fetch_po_codes_for_agent(
+    client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
+) -> Set[str]:
+    """
+    Возвращает просто множество кодов (code_lower), встречающихся в ЗП
+    для указанного контрагента за последние `days` дней.
+    """
+    index = await fetch_po_index_for_agent(client, agent_name, days)
+    return set(index.keys())
 # ---------- PRICE ----------
 def _q2(x: float) -> float:
     return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
