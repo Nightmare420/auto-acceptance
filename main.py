@@ -129,14 +129,23 @@ async def fetch_po_index_for_agent(
     client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
 ) -> Dict[str, Dict[str, Any]]:
     """
-    Возвращает индекс:
-      { code_lower: {"orders": [<имена ЗП>], "qty": <сколько позиций с этим кодом>} }
+    Индекс по заказам поставщику для агента:
+    {
+      code_lower: {
+        "name_from_ms": <наименование из МС>,
+        "orders": [{"number": <имя/номер ЗП>, "href": <ссылка>}...],
+        "qty_in_po": <кол-во позиций с этим кодом>
+      }
+    }
     """
     out: Dict[str, Dict[str, Any]] = {}
     agent_meta = None
+
     if agent_name:
-        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty",
-                                        params={"search": agent_name, "limit": 1})
+        r = await _request_with_backoff(
+            client, "GET", f"{MS_API}/entity/counterparty",
+            params={"search": agent_name, "limit": 1}
+        )
         rows = r.json().get("rows", [])
         if rows:
             agent_meta = rows[0]["meta"]
@@ -155,28 +164,35 @@ async def fetch_po_index_for_agent(
         )
         data = r.json()
         for po in data.get("rows", []):
+            # отфильтруем старые
             try:
                 ts = time.mktime(time.strptime(po.get("updated", "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
                     continue
             except Exception:
                 pass
-            po_name = po.get("name") or ""
+
+            po_number = po.get("name") or po.get("description") or ""
+            po_href = po.get("meta", {}).get("href", "")
+
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
                 code = (a.get("code") or "").strip()
                 if not code:
                     continue
                 key = _norm_low(code)
-                bucket = out.setdefault(key, {"orders": set(), "qty": 0})
-                bucket["orders"].add(po_name)
-                bucket["qty"] += 1
+                bucket = out.setdefault(key, {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0})
+                bucket["qty_in_po"] += 1
+                # добавим заказ (уникально по номеру+ссылке)
+                if po_number or po_href:
+                    if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
+                        bucket["orders"].append({"number": po_number, "href": po_href})
+
         next_href = data.get("meta", {}).get("nextHref")
         await asyncio.sleep(0.03)
 
-    for v in out.values():
-        v["orders"] = sorted(v["orders"])
     return out
+
 # --- КОНЕЦ добавления ---
 async def fetch_po_codes_for_agent(
     client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
@@ -340,16 +356,16 @@ async def import_invoice_preview(
     po_matches_list: List[Dict[str, Any]] = []
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        # 1) заранее подтянем товары по code=article
+        # товары по code=article
         codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # 2) коды из заказов поставщику (внутри того же клиента!)
-        po_codes: Set[str] = set()
+        # индекс совпадений ЗП для агента
+        po_index: Dict[str, Dict[str, Any]] = {}
         if agent_name:
-            po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
+            po_index = await fetch_po_index_for_agent(client, agent_name, po_days)
 
-        # 3) собираем строки превью
+        # наполним превью
         for _, r in df.iterrows():
             article = _norm(r["article"])
             name    = _norm(r.get("name"))
@@ -361,7 +377,7 @@ async def import_invoice_preview(
             found = prod_cache.get(code_key)
             product_id = found.get("id") if found else None
             will_create = not bool(found)
-            po_hit = code_key in po_codes
+            po_hit = code_key in po_index
 
             sale0 = calc_sale_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
             cost  = calc_cost_kgs(price, price_currency, usd_rate)
@@ -377,16 +393,35 @@ async def import_invoice_preview(
                 po_hit=po_hit,
             ))
 
+        # соберём список совпадений для отдельной таблицы (только по тем артикулам, что в файле)
+        seen: Set[str] = set()
+        for _, r in df.iterrows():
+            article = _norm(r["article"])
+            key = _norm_low(article)
+            if key in seen:
+                continue
+            seen.add(key)
+            info = po_index.get(key)
+            if not info:
+                continue
+            po_matches_list.append({
+                "article": article,
+                "name_from_ms": info.get("name_from_ms") or "",
+                "orders": info.get("orders") or [],
+                "qty_in_po": int(info.get("qty_in_po") or 0),
+            })
+
     return {
         "rows_total": len(rows),
         "po_agent": agent_name,
-        "po_matches_count": len(po_matches_list),  # если позже добавишь детальные совпадения
+        "po_matches_count": len(po_matches_list),
         "po_matches": po_matches_list,
         "will_create_count": sum(1 for x in rows if x.will_create),
         "will_use_existing_count": sum(1 for x in rows if not x.will_create),
         "rows": [r.model_dump() for r in rows],
         "note": "Вес вводится на фронте; цена продажи в KGS пересчитывается локально по формуле. Себестоимость = цена * курс.",
     }
+
 
 
 class SupplyCreateResponse(BaseModel):
