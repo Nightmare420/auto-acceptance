@@ -483,12 +483,12 @@ async def import_invoice_to_supply(
     vat_included: bool = Form(True),
     auto_create_products: bool = Form(True),
     auto_create_agent: bool = Form(True),
-    price_currency: str = Form("usd"),
+    price_currency: int = Form("usd"),
     coef: float = Form(1.6),
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
     weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
-    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
+    prices_kgs: Optional[int] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
 ):
     import json
 
