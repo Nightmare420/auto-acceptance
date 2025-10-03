@@ -540,7 +540,7 @@ async def import_invoice_to_supply(
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
             product_id = found["id"] if found else None
-            meta = found["meta"] if found else None
+            meta = {"meta": found["meta"]} if found else None
 
             weight   = float(weights_map.get(idx, 0.0))
             sale_kgs = sale_map.get(idx)
