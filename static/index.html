@@ -193,53 +193,58 @@
     }
   }
 
-  async function callApi(path, btn) {
-    const f = fileEl.files?.[0];
-    if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
+ async function callApi(path, btn) {
+  const f = fileEl.files?.[0];
+  if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
 
-    let q; try { q = qParams(true); } catch(e){ statusEl.textContent = e.message; return; }
+  let q; try { q = qParams(true); } catch(e){ statusEl.textContent = e.message; return; }
 
-    const form = new FormData();
-    form.append('file', f);
+  const form = new FormData();
+  form.append('file', f);
 
-    // если это импорт — прикладываем веса и цены, которые пользователь насчитал локально
-    if (path.includes('import-invoice-to-supply')) {
-      form.append('weights', JSON.stringify(weightsMap));
-      form.append('prices_kgs', JSON.stringify(pricesMap));
-      // продублируем query-параметры цен (сервер может пересчитать сам при необходимости)
-    }
+  // если это импорт — прикладываем веса и цены, которые пользователь насчитал локально
+  if (path.includes('import-invoice-to-supply')) {
+    form.append('weights', JSON.stringify(weightsMap));
+    form.append('prices_kgs', JSON.stringify(pricesMap));
 
-    setLoading(btn, true); statusEl.textContent = '';
-    let data;
-    try {
-      const resp = await fetch(`${path}?${q.toString()}`, { method:'POST', body: form });
-      const ct = resp.headers.get('content-type') || '';
-      data = ct.includes('json') ? await resp.json() : {error: await resp.text()};
-      if (!resp.ok) throw data;
-    } catch (e) {
-      console.error(e);
-      statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
-      setLoading(btn,false);
-      return;
-    }
-    setLoading(btn,false);
-
-    if (path.includes('preview')) {
-      rowsCache = data.rows || [];
-      // сбрасываем локальные карты
-      for (const k in weightsMap) delete weightsMap[k];
-      for (const k in pricesMap)  delete pricesMap[k];
-
-      renderMainTable(rowsCache);
-      renderPoMatches(rowsCache, data.po_matches || []);
-      $('results').style.display = '';
-      $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
-      $('summary').textContent = `Строк: ${data.rows_total}. Создадим: ${data.will_create_count}. Уже есть: ${data.will_use_existing_count}. Совпадений с заказами поставщика: ${(data.po_matches||[]).length}.`;
-      statusEl.textContent = '';
-    } else {
-      statusEl.textContent = 'Готово. Документ Приёмки создан.';
-    }
+    // >>> ВАЖНО: продублируем ключевые поля в form-data (чтобы бэк их точно увидел)
+    form.append('organization_name', (orgEl.value || '').trim());
+    form.append('store_name',        (storeEl.value || '').trim());
+    form.append('agent_name',        (agentEl.value || '').trim());
+    // <<<
   }
+
+  setLoading(btn, true); statusEl.textContent = '';
+  let data;
+  try {
+    const resp = await fetch(`${path}?${q.toString()}`, { method:'POST', body: form });
+    const ct = resp.headers.get('content-type') || '';
+    data = ct.includes('json') ? await resp.json() : {error: await resp.text()};
+    if (!resp.ok) throw data;
+  } catch (e) {
+    console.error(e);
+    statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
+    setLoading(btn,false);
+    return;
+  }
+  setLoading(btn,false);
+
+  if (path.includes('preview')) {
+    rowsCache = data.rows || [];
+    // сбрасываем локальные карты
+    for (const k in weightsMap) delete weightsMap[k];
+    for (const k in pricesMap)  delete pricesMap[k];
+
+    renderMainTable(rowsCache);
+    renderPoMatches(rowsCache, data.po_matches || []);
+    $('results').style.display = '';
+    $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
+    $('summary').textContent = `Строк: ${data.rows_total}. Создадим: ${data.will_create_count}. Уже есть: ${data.will_use_existing_count}. Совпадений с заказами поставщика: ${(data.po_matches||[]).length}.`;
+    statusEl.textContent = '';
+  } else {
+    statusEl.textContent = 'Готово. Документ Приёмки создан.';
+  }
+}
 
   // ----- отрисовка основной таблицы -----
   function renderMainTable(rows) {
