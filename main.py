@@ -352,8 +352,14 @@ async def import_invoice_preview(
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
-            product_id = found.get("id") if found else None
-            will_create = not bool(found)
+
+            if found:
+                product_id = found["id"]
+    # ОБЯЗАТЕЛЬНО обёртка:
+                meta = {"meta": found["meta"]}
+            else:
+                product_id = None
+                meta = None
 
             # --- скорректировано: используем po_index ---
             po_info = po_index.get(code_key)
