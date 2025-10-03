@@ -352,26 +352,12 @@ async def import_invoice_preview(
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
+            product_id = found.get("id") if found else None
 
-            if found:
-                product_id = found["id"]
-    # ОБЯЗАТЕЛЬНО обёртка:
-                meta = {"meta": found["meta"]}
-            else:
-                product_id = None
-                meta = None
 
-            # --- скорректировано: используем po_index ---
-            po_info = po_index.get(code_key)
-            po_hit = bool(po_info)
-            if po_info:
-                po_matches_list.append({
-                    "article": article,
-                    "name": name,
-                    "orders": po_info["orders"],
-                    "qty_in_po": po_info["qty"],
-                })
-            # --------------------------------------------
+            will_create = not bool(found)
+
+            po_hit = code_key in po_codes
 
             sale0 = calc_sale_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
             cost  = calc_cost_kgs(price, price_currency, usd_rate)
@@ -380,9 +366,11 @@ async def import_invoice_preview(
                 article=article, name=name, qty=qty, unit=unit,
                 price_raw=None if (price is None or np.isnan(price)) else float(price),
                 sale_kgs=None if sale0 is None else float(sale0),
-                cost_kgs=None if cost is None else float(cost),
+                cost_kgs=None if cost  is None else float(cost),
                 price_kgs=None if sale0 is None else float(sale0),
-                product_id=product_id, will_create=will_create, po_hit=po_hit
+                product_id=product_id,
+                will_create=will_create,
+                po_hit=po_hit
             ))
 
     return {
