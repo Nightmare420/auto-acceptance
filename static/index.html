@@ -250,7 +250,8 @@
   function renderMainTable(rows) {
     const tb = document.querySelector("#mainTable tbody");
     tb.innerHTML = "";
-    rows.forEach((r, idx) => {
+    console.log(rows);
+        rows.forEach((r, idx) => {
       const tr = document.createElement("tr");
       const priceText = (r.price_kgs != null) ? r.price_kgs : "";
       tr.innerHTML = `
