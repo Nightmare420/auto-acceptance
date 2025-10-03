@@ -133,6 +133,11 @@
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
+  // --- локальное состояние для весов/цен/строк превью
+  let rowsCache = [];
+  const weightsMap = {};   // { idx: weight }
+  const pricesMap  = {};   // { idx: price_kgs }
+
   function getCur() {
     for (const r of curRadios) if (r.checked) return r.value;
     return 'usd';
@@ -166,13 +171,43 @@
     if (btn !== importBtn)  importBtn.disabled = !!is;
   }
 
+  // округление до 0.01
+  function q2(x) {
+    return Math.round((x + Number.EPSILON) * 100) / 100;
+  }
+
+  // пересчёт по формуле
+  function computePriceKgs(row, weight) {
+    const price = parseFloat(row.price_raw ?? NaN);
+    const coef  = parseFloat(coefEl.value || '1') || 1;
+    if (!isFinite(price)) return null;
+
+    if (getCur() === 'usd') {
+      const rate = parseFloat(usdRateEl.value || '0') || 0;
+      const ship = parseFloat(shipEl.value || '0')   || 0;
+      const w    = parseFloat(weight || '0')         || 0;
+      if (!rate) return null; // нет курса — не считаем
+      return q2((price * coef + w * ship) * rate);
+    } else {
+      return q2(price * coef);
+    }
+  }
+
   async function callApi(path, btn) {
     const f = fileEl.files?.[0];
     if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
 
     let q; try { q = qParams(true); } catch(e){ statusEl.textContent = e.message; return; }
 
-    const form = new FormData(); form.append('file', f);
+    const form = new FormData();
+    form.append('file', f);
+
+    // если это импорт — прикладываем веса и цены, которые пользователь насчитал локально
+    if (path.includes('import-invoice-to-supply')) {
+      form.append('weights', JSON.stringify(weightsMap));
+      form.append('prices_kgs', JSON.stringify(pricesMap));
+      // продублируем query-параметры цен (сервер может пересчитать сам при необходимости)
+    }
 
     setLoading(btn, true); statusEl.textContent = '';
     let data;
@@ -190,8 +225,13 @@
     setLoading(btn,false);
 
     if (path.includes('preview')) {
-      renderMainTable(data.rows || []);
-      renderPoMatches(data.rows || [], data.po_matches || []);
+      rowsCache = data.rows || [];
+      // сбрасываем локальные карты
+      for (const k in weightsMap) delete weightsMap[k];
+      for (const k in pricesMap)  delete pricesMap[k];
+
+      renderMainTable(rowsCache);
+      renderPoMatches(rowsCache, data.po_matches || []);
       $('results').style.display = '';
       $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
       $('summary').textContent = `Строк: ${data.rows_total}. Создадим: ${data.will_create_count}. Уже есть: ${data.will_use_existing_count}. Совпадений с заказами поставщика: ${(data.po_matches||[]).length}.`;
@@ -207,6 +247,7 @@
     tb.innerHTML = "";
     rows.forEach((r, idx) => {
       const tr = document.createElement("tr");
+      const priceText = (r.price_kgs != null) ? r.price_kgs : "";
       tr.innerHTML = `
         <td class="mono">${r.article || ""}</td>
         <td>${(r.name || "").replaceAll("<","&lt;")}</td>
@@ -214,13 +255,48 @@
         <td>${r.unit || ""}</td>
         <td>${r.price_raw ?? ""}</td>
         <td><input type="number" min="0" step="0.001" class="weightInput" data-row="${idx}" style="width:90px"/></td>
-        <td class="priceKgs" data-row="${idx}">${r.price_kgs != null ? r.price_kgs : ""}</td>
+        <td class="priceKgs" data-row="${idx}">${priceText}</td>
         <td>${r.po_hit ? '<span class="chip ok">есть</span>' : '<span class="chip no">нет</span>'}</td>
         <td>${r.will_create ? '<span class="chip no">создадим</span>' : '<span class="chip ok">существует</span>'}</td>
       `;
       tb.appendChild(tr);
     });
   }
+
+  // делегирование: мгновенный пересчёт при вводе веса
+  document.addEventListener('input', (e) => {
+    if (!e.target.classList?.contains('weightInput')) return;
+    const idx = parseInt(e.target.dataset.row, 10);
+    if (!rowsCache[idx]) return;
+    const w = e.target.value;
+    weightsMap[idx] = parseFloat(w || '0') || 0;
+    const price = computePriceKgs(rowsCache[idx], weightsMap[idx]);
+    const cell = document.querySelector(`.priceKgs[data-row="${idx}"]`);
+    if (price == null) {
+      cell.textContent = '';
+      delete pricesMap[idx];
+    } else {
+      cell.textContent = price.toFixed(2);
+      pricesMap[idx] = price;
+    }
+  });
+
+  // если меняют настройки цены (валюта/курс/коэф/доставка) — пересчитаем все строки
+  function recalcAll() {
+    document.querySelectorAll('.weightInput').forEach(inp => {
+      const idx = parseInt(inp.dataset.row, 10);
+      const w = parseFloat(inp.value || '0') || 0;
+      weightsMap[idx] = w;
+      const price = computePriceKgs(rowsCache[idx], w);
+      const cell = document.querySelector(`.priceKgs[data-row="${idx}"]`);
+      if (cell) {
+        if (price == null) { cell.textContent = ''; delete pricesMap[idx]; }
+        else { cell.textContent = price.toFixed(2); pricesMap[idx] = price; }
+      }
+    });
+  }
+  curRadios.forEach(r => r.addEventListener('change', recalcAll));
+  ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
 
   // ----- отрисовка совпадений ЗП -----
   function renderPoMatches(previewRows, poMatches) {
