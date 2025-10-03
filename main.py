@@ -1,5 +1,5 @@
 # requirements: fastapi, uvicorn, httpx, pandas, openpyxl, numpy, pydantic, python-multipart, xlrd
-import os, re, time, base64, asyncio, json
+import os, re, time, base64, asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -18,16 +18,24 @@ MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
 MS_LOGIN = os.environ.get("MS_LOGIN")
 MS_PASSWORD = os.environ.get("MS_PASSWORD")
 
+# внешний код прайс-типа "Цена продажи Америка"
+AMERICA_PRICE_TYPE_EXTCODE = "345befb9-8ffb-42ac-86ca-e24f76de1310"
+
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
 
 def ms_headers() -> Dict[str, str]:
     token = base64.b64encode(f"{MS_LOGIN}:{MS_PASSWORD}".encode()).decode()
-    return {"Authorization": f"Basic {token}", "Content-Type": "application/json", "Accept-Encoding": "gzip"}
+    return {
+        "Authorization": f"Basic {token}",
+        "Content-Type": "application/json",
+        "Accept-Encoding": "gzip",
+    }
 
 # ---------- UTILS ----------
 def _norm(s: Optional[str]) -> str:
-    if s is None: return ""
+    if s is None:
+        return ""
     s = str(s).replace("\u00A0", " ")
     s = re.sub(r"\s+", " ", s)
     return s.strip()
@@ -104,7 +112,7 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
 
-# ---------- MS LOOKUPS ----------
+# ---------- MS lookups ----------
 async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) -> Dict[str, Dict[str,Any]]:
     out: Dict[str, Dict[str,Any]] = {}
     for code in {c for c in (c.strip() for c in codes) if c}:
@@ -116,27 +124,14 @@ async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) 
         await asyncio.sleep(0.05)
     return out
 
-async def fetch_po_details_for_agent(
-    client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
-) -> Dict[str, Dict[str, Any]]:
-    """
-    Возвращает:
-    {
-      code_lower: {
-        "orders": [{"number": "...", "href": "..."}],
-        "qty": <float>,
-        "ms_name": "<assortment.name>"
-      }
-    }
-    """
-    out: Dict[str, Dict[str, Any]] = {}
-    if not agent_name:
-        return out
-
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty",
-                                    params={"search": agent_name, "limit": 1})
-    rows = r.json().get("rows", [])
-    agent_meta = rows[0]["meta"] if rows else None
+async def fetch_po_codes_for_agent(client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90) -> Set[str]:
+    codes: Set[str] = set()
+    agent_meta = None
+    if agent_name:
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty", params={"search": agent_name, "limit": 1})
+        rows = r.json().get("rows", [])
+        if rows:
+            agent_meta = rows[0]["meta"]
 
     params = {"limit": 100, "expand": "positions.assortment"}
     if agent_meta:
@@ -146,71 +141,130 @@ async def fetch_po_details_for_agent(
     until_ts = time.time() - days * 86400
 
     while next_href:
-        r = await _request_with_backoff(client, "GET", next_href,
-                                        params=params if next_href.endswith("purchaseorder") else None)
+        r = await _request_with_backoff(client, "GET", next_href, params=params if next_href.endswith("purchaseorder") else None)
         data = r.json()
-        for po in data.get("rows", []):
+        for row in data.get("rows", []):
             try:
-                ts = time.mktime(time.strptime(po.get("updated", "")[:19], "%Y-%m-%d %H:%M:%S"))
+                ts = time.mktime(time.strptime(row.get("updated", "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
                     continue
             except Exception:
                 pass
-
-            po_name = po.get("name") or ""
-            po_meta = po.get("meta") or {}
-            po_href = po_meta.get("uuidHref") or po_meta.get("href") or ""
-
-            for p in (po.get("positions", {}).get("rows") or []):
+            for p in (row.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
-                code = _norm(a.get("code"))
-                if not code:
-                    continue
-                key = _norm_low(code)
-                qty = float(p.get("quantity") or 0)
-                ms_name = a.get("name") or ""
-
-                bucket = out.setdefault(key, {"orders": [], "qty": 0.0, "ms_name": ""})
-                bucket["qty"] += qty
-                if ms_name and not bucket["ms_name"]:
-                    bucket["ms_name"] = ms_name
-                if po_name and po_href:
-                    if not any(o.get("href") == po_href for o in bucket["orders"]):
-                        bucket["orders"].append({"number": po_name, "href": po_href})
-
+                code = a.get("code")
+                if code:
+                    codes.add(_norm_low(code))
         next_href = data.get("meta", {}).get("nextHref")
         await asyncio.sleep(0.05)
-
-    return out
+    return codes
 
 # ---------- PRICE ----------
-def calc_price_kgs(
-    price_raw: Optional[float],
-    currency_ui: str,
-    coef: float,
-    usd_rate: Optional[float],
-    shipping_per_kg_usd: Optional[float],
-    weight_kg: float,
-) -> Optional[float]:
-    """USD: (price*coef + weight*ship) * usd_rate;  KGS: price*coef"""
+def _q2(x: float) -> float:
+    return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+def calc_sale_kgs(price_raw: Optional[float], currency_ui: str, coef: float,
+                  usd_rate: Optional[float], shipping_per_kg_usd: Optional[float],
+                  weight_kg: float) -> Optional[float]:
+    """Цена ПРОДАЖИ в сомах (формула)."""
     try:
         p = float(price_raw)
     except (TypeError, ValueError):
         return None
     if np.isnan(p):
         return None
+    coef = float(coef or 1.0)
+    if (currency_ui or "").lower() == "usd":
+        r    = float(usd_rate or 0.0)
+        ship = float(shipping_per_kg_usd or 0.0)
+        w    = float(weight_kg or 0.0)
+        return _q2((p * coef + w * ship) * r)
+    # KGS: коэффициент, доставка/курс игнорируем
+    return _q2(p * coef)
 
-    c = float(coef or 1.0)
-
+def calc_cost_kgs(price_raw: Optional[float], currency_ui: str, usd_rate: Optional[float]) -> Optional[float]:
+    """СЕБЕСТОИМОСТЬ в сомах: price * курс (для USD) или как есть (KGS). Без коэффициента и доставки."""
+    try:
+        p = float(price_raw)
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(p):
+        return None
     if (currency_ui or "").lower() == "usd":
         r = float(usd_rate or 0.0)
-        ship = float(shipping_per_kg_usd or 0.0)
-        w = float(weight_kg or 0.0)
-        kgs = (p * c + w * ship) * r
-    else:
-        kgs = p * c
+        if not r:
+            return None
+        return _q2(p * r)
+    # KGS
+    return _q2(p)
 
-    return float(Decimal(str(kgs)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+# ---------- meta helpers (once per request) ----------
+async def get_kgs_currency_meta(client: httpx.AsyncClient) -> Dict[str, Any]:
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/currency", params={"limit": 100})
+    for row in r.json().get("rows", []):
+        iso = (row.get("isoCode") or row.get("code") or "").upper()
+        name = (row.get("name") or "").lower()
+        if iso == "KGS" or "сом" in name:
+            return {"meta": row["meta"]}
+    # fallback — берём первую
+    rows = r.json().get("rows", [])
+    if not rows:
+        raise HTTPException(400, "Не найдена валюта KGS в аккаунте.")
+    return {"meta": rows[0]["meta"]}
+
+async def get_price_type_meta_by_external_code(client: httpx.AsyncClient, external_code: str) -> Dict[str, Any]:
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/context/companysettings/pricetype")
+    for pt in r.json():
+        if pt.get("externalCode") == external_code:
+            return {"meta": pt["meta"]}
+    raise HTTPException(400, "Не найден прайс-тип с указанным внешним кодом (Цена продажи Америка).")
+
+async def update_product_prices(
+    client: httpx.AsyncClient, product_id: str,
+    cost_kgs: Optional[float], sale_kgs: Optional[float],
+    kgs_currency_meta: Dict[str, Any],
+    america_price_type_meta: Dict[str, Any],
+) -> None:
+    if cost_kgs is None and sale_kgs is None:
+        return
+    # получим текущие salePrices, чтобы не затирать другие цены
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/{product_id}")
+    prod = r.json()
+    sale_prices = (prod.get("salePrices") or [])[:]
+
+    new_list = []
+    added = False
+    for sp in sale_prices:
+        pt_meta = sp.get("priceType", {}).get("meta", {})
+        if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
+            # заменим на нашу
+            if sale_kgs is not None:
+                new_list.append({
+                    "value": int(round(sale_kgs * 100)),
+                    "currency": kgs_currency_meta["meta"],
+                    "priceType": america_price_type_meta["meta"],
+                })
+            else:
+                new_list.append(sp)
+            added = True
+        else:
+            new_list.append(sp)
+    if not added and sale_kgs is not None:
+        new_list.append({
+            "value": int(round(sale_kgs * 100)),
+            "currency": kgs_currency_meta["meta"],
+            "priceType": america_price_type_meta["meta"],
+        })
+
+    payload: Dict[str, Any] = {}
+    if cost_kgs is not None:
+        payload["buyPrice"] = {
+            "value": int(round(cost_kgs * 100)),
+            "currency": kgs_currency_meta["meta"],
+        }
+    payload["salePrices"] = new_list
+
+    await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
 # ---------- API ----------
 app = FastAPI()
@@ -232,6 +286,10 @@ class PreviewRow(BaseModel):
     qty: float
     unit: Optional[str] = None
     price_raw: Optional[float] = None
+    # NEW: показываем две цены
+    cost_kgs: Optional[float] = None     # себестоимость (курс)
+    sale_kgs: Optional[float] = None     # цена продажи (формула)
+    # для совместимости: price_kgs = sale_kgs
     price_kgs: Optional[float] = None
     product_id: Optional[str] = None
     will_create: bool = False
@@ -252,18 +310,14 @@ async def import_invoice_preview(
     po_days: int = 90,
 ):
     df = read_invoice_excel(file.file, file.filename)
-
-    rows_payload: List[Dict[str, Any]] = []
-    po_details: Dict[str, Dict[str, Any]] = {}
+    rows: List[PreviewRow] = []
+    po_codes: Set[str] = set()
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        # товары по code=article
         codes = { _norm(r["article"]) for _, r in df.iterrows() }
         prod_cache = await prefetch_products_by_code(client, codes)
-
-        # детали по заказам поставщика
         if agent_name:
-            po_details = await fetch_po_details_for_agent(client, agent_name, po_days)
+            po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
 
         for _, r in df.iterrows():
             article = _norm(r["article"])
@@ -276,78 +330,29 @@ async def import_invoice_preview(
             found = prod_cache.get(code_key)
             product_id = found.get("id") if found else None
             will_create = not bool(found)
+            po_hit = code_key in po_codes
 
-            po_info = po_details.get(code_key) or {}
-            po_hit = bool(po_info)
-            ms_name = po_info.get("ms_name") or None
+            # вес вводят на фронте; здесь считаем sale без веса (0), а cost — всегда
+            sale0 = calc_sale_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
+            cost  = calc_cost_kgs(price, price_currency, usd_rate)
 
-            price_kgs = calc_price_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
-
-            row_obj = PreviewRow(
+            rows.append(PreviewRow(
                 article=article, name=name, qty=qty, unit=unit,
                 price_raw=None if (price is None or np.isnan(price)) else float(price),
-                price_kgs=None if price_kgs is None else round(price_kgs, 2),
+                sale_kgs=None if sale0 is None else float(sale0),
+                cost_kgs=None if cost is None else float(cost),
+                price_kgs=None if sale0 is None else float(sale0),  # совместимость
                 product_id=product_id, will_create=will_create, po_hit=po_hit
-            )
-            d = row_obj.model_dump()
-            if ms_name:
-                d["ms_name"] = ms_name
-            rows_payload.append(d)
+            ))
 
     return {
-        "rows_total": len(rows_payload),
+        "rows_total": len(rows),
         "po_agent": agent_name,
-        "will_create_count": sum(1 for x in rows_payload if x["will_create"]),
-        "will_use_existing_count": sum(1 for x in rows_payload if not x["will_create"]),
-        "rows": rows_payload,
-        # данные для нижней таблицы «совпадения с ЗП»
-        "po_matches": [
-            {
-                "article": code,                      # будем использовать как ключ
-                "name_from_ms": v.get("ms_name") or "",
-                "orders": v.get("orders") or [],      # [{number, href}]
-                "qty_in_po": v.get("qty") or 0,
-            }
-            for code, v in po_details.items()
-        ],
-        "note": "Вес вводится на фронте; цена в KGS пересчитывается локально по формуле.",
+        "will_create_count": sum(1 for x in rows if x.will_create),
+        "will_use_existing_count": sum(1 for x in rows if not x.will_create),
+        "rows": [r.model_dump() for r in rows],
+        "note": "Вес вводится на фронте; цена продажи в KGS пересчитывается локально по формуле. Себестоимость = цена * курс.",
     }
-
-# ====== Ниже — эндпоинт создания Приёмки (без изменений вашей логики) ======
-def _meta_from(entity: str, href: str) -> Dict[str, Any]:
-    return {"meta": {"href": href, "type": entity, "mediaType": "application/json"}}
-
-async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional[str], store_name: Optional[str],
-                       agent_name: Optional[str], auto_create_agent: bool) -> Tuple[Dict[str, Dict[str, Any]], bool]:
-    refs: Dict[str, Dict[str, Any]] = {}
-    created_agent = False
-
-    if not organization_name:
-        raise HTTPException(400, "Укажите организацию.")
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/organization", params={"search": organization_name, "limit": 1})
-    rows = r.json().get("rows", [])
-    if not rows: raise HTTPException(400, "Не найдена организация.")
-    refs["organization"] = _meta_from("organization", rows[0]["meta"]["href"])
-
-    if not store_name:
-        raise HTTPException(400, "Укажите склад.")
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/store", params={"search": store_name, "limit": 1})
-    rows = r.json().get("rows", [])
-    if not rows: raise HTTPException(400, "Не найден склад.")
-    refs["store"] = _meta_from("store", rows[0]["meta"]["href"])
-
-    if not agent_name:
-        raise HTTPException(400, "Укажите поставщика (контрагента).")
-    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty", params={"search": agent_name, "limit": 1})
-    rows = r.json().get("rows", [])
-    if not rows and auto_create_agent:
-        r2 = await _request_with_backoff(client, "POST", f"{MS_API}/entity/counterparty", json={"name": agent_name})
-        rows = [r2.json()]
-        created_agent = True
-    if not rows: raise HTTPException(400, "Не найден контрагент.")
-    refs["agent"] = _meta_from("counterparty", rows[0]["meta"]["href"])
-
-    return refs, created_agent
 
 class SupplyCreateResponse(BaseModel):
     created_positions: int
@@ -358,30 +363,65 @@ class SupplyCreateResponse(BaseModel):
     will_use_existing: List[Dict[str, Any]] = []
     supply_meta: Dict[str, Any]
 
+async def resolve_refs(client: httpx.AsyncClient, *, organization_name: Optional[str], store_name: Optional[str],
+                       agent_name: Optional[str], auto_create_agent: bool) -> Tuple[Dict[str, Dict[str, Any]], bool]:
+    def meta_from(entity: str, href: str) -> Dict[str, Any]:
+        return {"meta": {"href": href, "type": entity, "mediaType": "application/json"}}
+
+    refs: Dict[str, Dict[str, Any]] = {}
+    created_agent = False
+
+    if organization_name:
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/organization", params={"search": organization_name, "limit": 1})
+        rows = r.json().get("rows", [])
+        if not rows: raise HTTPException(400, "Не найдена организация.")
+        refs["organization"] = meta_from("organization", rows[0]["meta"]["href"])
+    else:
+        raise HTTPException(400, "Укажите организацию.")
+
+    if store_name:
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/store", params={"search": store_name, "limit": 1})
+        rows = r.json().get("rows", [])
+        if not rows: raise HTTPException(400, "Не найден склад.")
+        refs["store"] = meta_from("store", rows[0]["meta"]["href"])
+    else:
+        raise HTTPException(400, "Укажите склад.")
+
+    if agent_name:
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/counterparty", params={"search": agent_name, "limit": 1})
+        rows = r.json().get("rows", [])
+        if not rows and auto_create_agent:
+            r2 = await _request_with_backoff(client, "POST", f"{MS_API}/entity/counterparty", json={"name": agent_name})
+            rows = [r2.json()]
+            created_agent = True
+        if not rows: raise HTTPException(400, "Не найден контрагент.")
+        refs["agent"] = meta_from("counterparty", rows[0]["meta"]["href"])
+    else:
+        raise HTTPException(400, "Укажите поставщика (контрагента).")
+
+    return refs, created_agent
+
 @app.post("/import-invoice-to-supply/", response_model=SupplyCreateResponse)
 async def import_invoice_to_supply(
     file: UploadFile = File(...),
-
     organization_name: Optional[str] = Form(None),
     store_name: Optional[str] = Form(None),
     agent_name: Optional[str] = Form(None),
-
     moment: Optional[str] = Form(None),
     name: Optional[str] = Form(None),
     vat_enabled: bool = Form(True),
     vat_included: bool = Form(True),
-
     auto_create_products: bool = Form(True),
     auto_create_agent: bool = Form(True),
-
     price_currency: str = Form("usd"),
     coef: float = Form(1.6),
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
-
     weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
-    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...}
+    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
 ):
+    import json
+
     df = read_invoice_excel(file.file, file.filename)
     if df.empty:
         raise HTTPException(400, "Не обнаружены строки с товарами.")
@@ -390,18 +430,16 @@ async def import_invoice_to_supply(
     weights_map: Dict[int, float] = {}
     if weights:
         try:
-            tmp = json.loads(weights) or {}
-            for k, v in tmp.items():
+            for k, v in (json.loads(weights) or {}).items():
                 weights_map[int(k)] = float(v or 0)
         except Exception:
             pass
 
-    prices_map: Dict[int, float] = {}
+    sale_map: Dict[int, float] = {}
     if prices_kgs:
         try:
-            tmp = json.loads(prices_kgs) or {}
-            for k, v in tmp.items():
-                prices_map[int(k)] = float(v or 0)
+            for k, v in (json.loads(prices_kgs) or {}).items():
+                sale_map[int(k)] = float(v or 0)
         except Exception:
             pass
 
@@ -414,13 +452,16 @@ async def import_invoice_to_supply(
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
         refs, created_agent = await resolve_refs(
             client,
-            organization_name=organization_name,
-            store_name=store_name,
-            agent_name=agent_name,
-            auto_create_agent=auto_create_agent,
+            organization_name=organization_name, store_name=store_name,
+            agent_name=agent_name, auto_create_agent=auto_create_agent
         )
 
-        codes = {_norm(r["article"]) for _, r in df.iterrows()}
+        # мета для цен
+        kgs_meta = await get_kgs_currency_meta(client)
+        america_pt = await get_price_type_meta_by_external_code(client, AMERICA_PRICE_TYPE_EXTCODE)
+
+        # товары
+        codes = { _norm(r["article"]) for _, r in df.iterrows() }
         prod_cache = await prefetch_products_by_code(client, codes)
 
         for idx, r in df.iterrows():
@@ -431,39 +472,55 @@ async def import_invoice_to_supply(
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
-            meta = None
+            product_id = found["id"] if found else None
+            meta = found["meta"] if found else None
+
+            # себестоимость и продажа
+            weight   = float(weights_map.get(idx, 0.0))
+            sale_kgs = sale_map.get(idx)
+            if sale_kgs is None:
+                sale_kgs = calc_sale_kgs(price_raw, price_currency, coef, usd_rate, shipping_per_kg_usd, weight) or 0.0
+            cost_kgs = calc_cost_kgs(price_raw, price_currency, usd_rate) or 0.0
 
             if found:
-                meta = found["meta"]
-                will_use_existing.append({"article": article, "name": name_row, "product_id": found["id"]})
+                will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                # обновим цены в карточке
+                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                payload_product = {"name": name_row, "code": article}
+                # создаём товар с ценами
+                payload_product: Dict[str, Any] = {
+                    "name": name_row,
+                    "code": article,
+                    "buyPrice": {
+                        "value": int(round(cost_kgs * 100)),
+                        "currency": kgs_meta["meta"],
+                    },
+                    "salePrices": [{
+                        "value": int(round(sale_kgs * 100)),
+                        "currency": kgs_meta["meta"],
+                        "priceType": america_pt["meta"],
+                    }],
+                }
+                # ЕИ возьмём любую первую
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
                     payload_product["uom"] = {"meta": rows_u[0]["meta"]}
+
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
                 meta = {"meta": r_c.json()["meta"]}
                 created_products.append(article)
                 will_create.append({"article": article, "name": name_row})
 
-            weight = float(weights_map.get(idx, 0.0))
-            price_client = prices_map.get(idx)
-            if price_client is not None and price_client >= 0:
-                price_kgs = price_client
-            else:
-                price_kgs = calc_price_kgs(price_raw, price_currency, coef, usd_rate, shipping_per_kg_usd, weight)
-                if price_kgs is None:
-                    price_kgs = 0.0
-
-            positions.append({
+            pos = {
                 "assortment": meta,
                 "quantity": qty,
-                "price": int(round(float(price_kgs) * 100)),
-            })
+                "price": int(round(cost_kgs * 100)),  # ВАЖНО: в Приёмке ставим СЕБЕСТОИМОСТЬ
+            }
+            positions.append(pos)
 
         if not positions:
             raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
@@ -480,12 +537,11 @@ async def import_invoice_to_supply(
         if moment and str(moment).strip():
             payload_supply["moment"] = str(moment).strip()
 
-        url = f"{MS_API}/entity/supply"
-        r = await _request_with_backoff(client, "POST", url, json=payload_supply)
+        # создаём Приёмку
+        r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/supply", json=payload_supply)
 
         if r.status_code in (401, 403):
             raise HTTPException(r.status_code, detail="Нет доступа к API МойСклад")
-
         if r.status_code >= 400:
             msg = None
             try:
