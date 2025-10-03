@@ -335,23 +335,21 @@ async def import_invoice_preview(
     po_days: int = 90,
 ):
     df = read_invoice_excel(file.file, file.filename)
-    rows: List[PreviewRow] = []
 
-    # --- ДОБАВЛЕНО: детальные совпадения ---
-    po_index: Dict[str, Dict[str, Any]] = {}
+    rows: List[PreviewRow] = []
     po_matches_list: List[Dict[str, Any]] = []
-    # ---------------------------------------
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        codes = { _norm(r["article"]) for _, r in df.iterrows() }
+        # 1) заранее подтянем товары по code=article
+        codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # --- ДОБАВЛЕНО: строим индекс ЗП для агента ---
-    po_codes: Set[str] = set()
-    if agent_name:
-        po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
-        # ------------------------------------------------
+        # 2) коды из заказов поставщику (внутри того же клиента!)
+        po_codes: Set[str] = set()
+        if agent_name:
+            po_codes = await fetch_po_codes_for_agent(client, agent_name, po_days)
 
+        # 3) собираем строки превью
         for _, r in df.iterrows():
             article = _norm(r["article"])
             name    = _norm(r.get("name"))
@@ -362,10 +360,7 @@ async def import_invoice_preview(
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
             product_id = found.get("id") if found else None
-
-
             will_create = not bool(found)
-
             po_hit = code_key in po_codes
 
             sale0 = calc_sale_kgs(price, price_currency, coef, usd_rate, shipping_per_kg_usd, 0.0)
@@ -379,21 +374,20 @@ async def import_invoice_preview(
                 price_kgs=None if sale0 is None else float(sale0),
                 product_id=product_id,
                 will_create=will_create,
-                po_hit=po_hit
+                po_hit=po_hit,
             ))
 
     return {
         "rows_total": len(rows),
         "po_agent": agent_name,
-        # --- ДОБАВЛЕНО: для отдельной таблицы совпадений ---
-        "po_matches_count": len(po_matches_list),
+        "po_matches_count": len(po_matches_list),  # если позже добавишь детальные совпадения
         "po_matches": po_matches_list,
-        # ---------------------------------------------------
         "will_create_count": sum(1 for x in rows if x.will_create),
         "will_use_existing_count": sum(1 for x in rows if not x.will_create),
         "rows": [r.model_dump() for r in rows],
         "note": "Вес вводится на фронте; цена продажи в KGS пересчитывается локально по формуле. Себестоимость = цена * курс.",
     }
+
 
 class SupplyCreateResponse(BaseModel):
     created_positions: int
