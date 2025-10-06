@@ -603,25 +603,53 @@ async def import_invoice_to_supply(
                         "priceType": america_pt["meta"],
                     }],
                 }
+                # ЕИ
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
                     payload_product["uom"] = {"meta": rows_u[0]["meta"]}
 
+                # создаём товар
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
-                meta = {"meta": r_c.json()["meta"]}
-                created_products.append(article)
-                will_create.append({"article": article, "name": name_row})
+                data_c = None
+                try:
+                    data_c = r_c.json()
+                except Exception:
+                    data_c = None
 
-            pos = {
-                "assortment": meta,
-                "quantity": qty,
-                "price": int(round(cost_kgs * 100)),  # в Приёмке ставим СЕБЕСТОИМОСТЬ
-            }
-            positions.append(pos)
+                if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
+                    # успех
+                    meta = {"meta": data_c["meta"]}
+                    product_id = data_c.get("id")
+                    created_products.append(article)
+                    will_create.append({"article": article, "name": name_row})
+                else:
+                    # попробуем взять существующий по коду (на случай "уже существует")
+                    r_find = await _request_with_backoff(
+                        client, "GET", f"{MS_API}/entity/product",
+                        params={"filter": f"code={article}", "limit": 1}
+                    )
+                    rows_find = r_find.json().get("rows", [])
+                    if rows_find:
+                        meta = {"meta": rows_find[0]["meta"]}
+                        product_id = rows_find[0]["id"]
+                        # считаем, что он "уже существовал"
+                        will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                    else:
+                        # сформируем читаемую ошибку из ответа МС
+                        msg = "неизвестная ошибка"
+                        if isinstance(data_c, dict):
+                            if data_c.get("errors"):
+                                parts = []
+                                for e in data_c["errors"]:
+                                    t = e.get("error") or e.get("message") or "Ошибка"
+                                    if e.get("code"): t += f" (code {e['code']})"
+                                    parts.append(t)
+                                msg = "; ".join(parts)
+                            elif data_c.get("message"):
+                                msg = data_c["message"]
+                        raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
-        if not positions:
-            raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
 
         payload_supply: Dict[str, Any] = {
             "applicable": True,
