@@ -542,20 +542,20 @@ async def import_invoice_to_supply(
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                payload_product: Dict[str, Any] = {
+
+                payload_product = {
                     "name": name_row,
                     "code": article,
                     "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta,
+                        "currency": kgs_meta,          # {"meta":...}
                     },
                     "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta,
-                        "priceType": america_pt,
+                        "currency": kgs_meta,          # {"meta":...}
+                        "priceType": america_pt,       # {"meta":...}
                     }],
                 }
-                # ЕИ
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
@@ -574,7 +574,7 @@ async def import_invoice_to_supply(
                     created_products.append(article)
                     will_create.append({"article": article, "name": name_row})
                 else:
-                    # fallback — поиск по коду, если «уже существует»
+                    # fallback — ищем существующий по коду
                     r_find = await _request_with_backoff(
                         client, "GET", f"{MS_API}/entity/product",
                         params={"filter": f"code={article}", "limit": 1}
@@ -591,7 +591,8 @@ async def import_invoice_to_supply(
                                 parts = []
                                 for e in data_c["errors"]:
                                     t = e.get("error") or e.get("message") or "Ошибка"
-                                    if e.get("code"): t += f" (code {e['code']})"
+                                    if e.get("code"):
+                                        t += f" (code {e['code']})"
                                     parts.append(t)
                                 msg = "; ".join(parts)
                             elif data_c.get("message"):
@@ -599,11 +600,11 @@ async def import_invoice_to_supply(
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
             # ← ДОБАВЛЯЕМ ПОЗИЦИЮ (фикс: раньше могли забывать)
-            if meta:
+            if meta and qty and qty > 0:
                 positions.append({
-                    "assortment": meta,                           # {"meta": {...}}
-                    "quantity": qty,
-                    "price": int(round(cost_kgs * 100)),          # закупочная в копейках
+                    "assortment": meta,                      # строго {"meta": {...}}
+                    "quantity": float(qty),                  # не пустое и > 0
+                    "price": int(round(cost_kgs * 100)),     # цена позиции в копейках (себестоимость)
                 })
 
         if not positions:
@@ -643,6 +644,37 @@ async def import_invoice_to_supply(
                 pass
             if not msg: msg = r.text
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
+
+        supply = r.json()
+        supply_id = supply["id"]
+
+        # ДОБАВЛЯЕМ ПОЗИЦИИ ВНУТРИ ЭТОГО ЖЕ async with
+        r_pos = await _request_with_backoff(
+            client,
+            "POST",
+            f"{MS_API}/entity/supply/{supply_id}/positions",
+            json={"rows": positions},
+        )
+        if r_pos.status_code >= 400:
+            msg = None
+            try:
+                body = r_pos.json()
+                if isinstance(body, dict):
+                    errs = body.get("errors") or []
+                    if errs:
+                        parts = []
+                        for e in errs:
+                            txt = e.get("error") or e.get("message") or "Ошибка"
+                            if e.get("code"): txt += f" (code {e['code']})"
+                            parts.append(txt)
+                        msg = "; ".join(parts)
+                    elif body.get("message"):
+                        msg = body["message"]
+            except Exception:
+                pass
+            if not msg:
+                msg = r_pos.text
+            raise HTTPException(status_code=r_pos.status_code, detail=f"МС отклонил позиции: {msg}")
 
         supply = r.json()
         supply_id = supply["id"]
