@@ -197,7 +197,9 @@
   const f = fileEl.files?.[0];
   if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
 
-  let q; try { q = qParams(true); } catch(e){ statusEl.textContent = e.message; return; }
+  let q; try { q = qParams(true); } catch (e) {
+    statusEl.textContent = e.message; return;
+  }
 
   const form = new FormData();
   form.append('file', f);
@@ -207,31 +209,40 @@
     form.append('weights', JSON.stringify(weightsMap));
     form.append('prices_kgs', JSON.stringify(pricesMap));
 
-    // >>> ВАЖНО: продублируем ключевые поля в form-data (чтобы бэк их точно увидел)
+    // уже было
     form.append('organization_name', (orgEl.value || '').trim());
     form.append('store_name',        (storeEl.value || '').trim());
     form.append('agent_name',        (agentEl.value || '').trim());
-    // <<<
+
+    // >>> ДОБАВЬ ЭТО: ценовые параметры тоже в form-data
+    form.append('price_currency', getCur());
+    form.append('coef', String(parseFloat(coefEl.value || '1.6') || 1.6));
+    if (getCur() === 'usd') {
+      const rate = parseFloat(usdRateEl.value || '');
+      if (!rate) { setLoading(btn,false); statusEl.textContent = 'Укажите курс доллара'; return; }
+      form.append('usd_rate', String(rate));
+      form.append('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15') || 0));
+    }
+    // <<< КОНЕЦ ДОБАВЛЕНИЯ
   }
 
   setLoading(btn, true); statusEl.textContent = '';
   let data;
   try {
-    const resp = await fetch(`${path}?${q.toString()}`, { method:'POST', body: form });
+    const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
     const ct = resp.headers.get('content-type') || '';
-    data = ct.includes('json') ? await resp.json() : {error: await resp.text()};
+    data = ct.includes('json') ? await resp.json() : { error: await resp.text() };
     if (!resp.ok) throw data;
   } catch (e) {
     console.error(e);
     statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
-    setLoading(btn,false);
+    setLoading(btn, false);
     return;
   }
-  setLoading(btn,false);
+  setLoading(btn, false);
 
   if (path.includes('preview')) {
     rowsCache = data.rows || [];
-    // сбрасываем локальные карты
     for (const k in weightsMap) delete weightsMap[k];
     for (const k in pricesMap)  delete pricesMap[k];
 
