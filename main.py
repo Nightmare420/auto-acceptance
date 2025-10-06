@@ -271,11 +271,11 @@ async def update_product_prices(
         pt_meta = sp.get("priceType", {}).get("meta", {})
         if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
             if sale_kgs is not None:
-                new_list.append({
-                    "value": int(round(sale_kgs * 100)),
-                    "currency": kgs_currency_meta["meta"],
-                    "priceType": america_price_type_meta["meta"],
-                })
+                    new_list.append({
+                        "value": int(round(sale_kgs * 100)),
+                        "currency": kgs_currency_meta,
+                        "priceType": america_price_type_meta,
+                    })
             else:
                 new_list.append(sp)
             added = True
@@ -293,7 +293,7 @@ async def update_product_prices(
     if cost_kgs is not None:
         payload["buyPrice"] = {
             "value": int(round(cost_kgs * 100)),
-            "currency": kgs_currency_meta["meta"],
+            "currency": kgs_currency_meta,
         }
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
@@ -547,12 +547,12 @@ async def import_invoice_to_supply(
                     "code": article,
                     "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta["meta"],          # ← фикс
+                        "currency": kgs_meta,
                     },
                     "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta["meta"],          # ← фикс
-                        "priceType": america_pt["meta"],       # ← фикс
+                        "currency": kgs_meta,
+                        "priceType": america_pt,
                     }],
                 }
                 # ЕИ
