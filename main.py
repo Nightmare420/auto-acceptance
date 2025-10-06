@@ -773,7 +773,7 @@ async def import_invoice_to_supply(
             client,
             "POST",
             f"{MS_API}/entity/supply/{supply_id}/positions",
-            json={"rows": positions},
+            json=positions,  # <-- массив позиций, без обёртки "rows"
         )
         if r_pos.status_code >= 400:
             msg = None
