@@ -486,8 +486,8 @@ async def import_invoice_to_supply(
     coef: float = Form(1.6),
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
-    weights: Optional[str] = Form(None),
-    prices_kgs: Optional[str] = Form(None),
+    weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
+    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...}
 ):
     import json
 
@@ -523,18 +523,17 @@ async def import_invoice_to_supply(
             organization_name=organization_name, store_name=store_name,
             agent_name=agent_name, auto_create_agent=auto_create_agent
         )
-        
-    producer_attr = await get_product_attr_meta_by_name(client, "Производитель")
-    producer_value = None
-    if producer_attr:
-        attr_type = (producer_attr.get("type") or "").lower()
-        if attr_type == "counterparty":
-            # если поле ссылочное на контрагента — кладём meta контрагента (поставщика)
-            if "agent" in refs and refs["agent"].get("meta"):
-                producer_value = refs["agent"]["meta"]
-    else:
-        # строковое/текстовое и пр. — пишем имя поставщика
-        producer_value = agent_name or ""
+
+        # ——— доп.поле «Производитель»
+        producer_attr = await get_product_attr_meta_by_name(client, "Производитель")
+        producer_value = None
+        if producer_attr:
+            attr_type = (producer_attr.get("type") or "").lower()
+            if attr_type == "counterparty":
+                if "agent" in refs and refs["agent"].get("meta"):
+                    producer_value = refs["agent"]["meta"]  # meta контрагента
+            else:
+                producer_value = agent_name or ""          # строковое значение
 
         kgs_meta = await get_kgs_currency_meta(client)
         america_pt = await get_price_type_meta_by_external_code(
@@ -543,7 +542,8 @@ async def import_invoice_to_supply(
             fallback_name="Цена продажи Америка",
         )
 
-        codes = { _norm(r["article"]) for _, r in df.iterrows() }
+        # кэш продуктов по коду
+        codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
         for idx, r in df.iterrows():
@@ -566,12 +566,18 @@ async def import_invoice_to_supply(
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
+                # — записываем «Производитель» в существующий продукт (если есть куда и что писать)
+                if producer_attr and producer_value is not None and product_id:
+                    try:
+                        await upsert_product_attr(client, product_id, producer_attr, producer_value)
+                    except Exception:
+                        pass
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
 
-                payload_product = {
+                payload_product: Dict[str, Any] = {
                     "name": name_row,
                     "code": article,
                     "buyPrice": {
@@ -584,7 +590,7 @@ async def import_invoice_to_supply(
                         "priceType": america_pt,
                     }],
                 }
-                
+                # — «Производитель» при создании
                 if producer_attr and producer_value is not None:
                     payload_product["attributes"] = [{
                         "meta": producer_attr["meta"],
@@ -609,6 +615,7 @@ async def import_invoice_to_supply(
                     created_products.append(article)
                     will_create.append({"article": article, "name": name_row})
                 else:
+                    # fallback — ищем существующий по коду
                     r_find = await _request_with_backoff(
                         client, "GET", f"{MS_API}/entity/product",
                         params={"filter": f"code={article}", "limit": 1}
@@ -618,6 +625,12 @@ async def import_invoice_to_supply(
                         meta = rows_find[0]["meta"]
                         product_id = rows_find[0]["id"]
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                        # — на всякий случай проставим «Производитель»
+                        if producer_attr and producer_value is not None and product_id:
+                            try:
+                                await upsert_product_attr(client, product_id, producer_attr, producer_value)
+                            except Exception:
+                                pass
                     else:
                         msg = "неизвестная ошибка"
                         if isinstance(data_c, dict):
@@ -633,72 +646,13 @@ async def import_invoice_to_supply(
                                 msg = data_c["message"]
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
+            # — позиции (оставляю как у тебя)
             q = float(qty or 0)
-            if q <= 0:
-                q = 1.0
-
-            if isinstance(meta, dict) and "href" in meta:
-                meta_clean = meta
-            elif isinstance(meta, dict) and "meta" in meta and isinstance(meta["meta"], dict):
-                meta_clean = meta["meta"]
-            else:
-                continue
-
-            q = float(qty or 0)
-            if not np.isfinite(q) or q <= 0:
-                q = 1.0
-
-            assortment_meta = None
-            # meta может быть как полная meta (из МС), так и {"meta": {...}}
-            if isinstance(meta, dict) and "href" in meta:
-                href = meta.get("href")
-                typ  = meta.get("type") or "product"
-                mt   = meta.get("mediaType") or "application/json"
-                assortment_meta = {"href": href, "type": typ, "mediaType": mt}
-            elif isinstance(meta, dict) and "meta" in meta and isinstance(meta["meta"], dict):
-                m = meta["meta"]
-                href = m.get("href")
-                typ  = m.get("type") or "product"
-                mt   = m.get("mediaType") or "application/json"
-                assortment_meta = {"href": href, "type": typ, "mediaType": mt}
-
-            # если meta так и не получили — пропускаем строку
-            if not (isinstance(assortment_meta, dict) and assortment_meta.get("href")):
-                continue
-
-            q = float(qty or 0)
-            if not np.isfinite(q) or q <= 0:
-                q = 1.0
-
-            # meta может быть либо «сырой» (href/type/mediaType), либо {"meta": {...}}
-            assortment_meta = None
-            if isinstance(meta, dict):
-                if "href" in meta:
-                    # сырой meta из МС
-                    href = meta.get("href")
-                    typ  = meta.get("type") or "product"
-                    mt   = meta.get("mediaType") or "application/json"
-                    if href:
-                        assortment_meta = {"href": href, "type": typ, "mediaType": mt}
-                elif "meta" in meta and isinstance(meta["meta"], dict) and "href" in meta["meta"]:
-                    m   = meta["meta"]
-                    href = m.get("href")
-                    typ  = m.get("type") or "product"
-                    mt   = m.get("mediaType") or "application/json"
-                    if href:
-                        assortment_meta = {"href": href, "type": typ, "mediaType": mt}
-
-            # если meta не получили — позицию НЕ добавляем
-            if not assortment_meta:
-                continue
-
-            q = float(r.get("qty") or 0)
             if not np.isfinite(q) or q <= 0:
                 q = 1.0
 
             assortment = normalize_assortment_meta(meta)
             if not assortment:
-                # если meta битый — пропустим строку, чтобы не сломать весь запрос
                 continue
 
             positions.append({
@@ -710,6 +664,7 @@ async def import_invoice_to_supply(
         if not positions:
             raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
 
+        # создаём Приёмку
         payload_supply: Dict[str, Any] = {
             "applicable": True,
             "vatEnabled": bool(vat_enabled),
@@ -741,6 +696,7 @@ async def import_invoice_to_supply(
                         msg = body["message"]
             except Exception:
                 pass
+        if r.status_code >= 400:
             if not msg: msg = r.text
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
 
@@ -749,61 +705,12 @@ async def import_invoice_to_supply(
         if not supply_id:
             raise HTTPException(500, "МС вернул ответ без id приёмки.")
 
-        valid_positions, bad = [], []
-        for i, p in enumerate(positions):
-            try:
-                ass = p.get("assortment")
-                # доводим до формата {"meta": {...}}
-                if isinstance(ass, dict) and "meta" not in ass and "href" in ass:
-                    ass = {"meta": ass}
-
-                meta_ok = (
-                    isinstance(ass, dict) and
-                    isinstance(ass.get("meta"), dict) and
-                    isinstance(ass["meta"].get("href"), str) and bool(ass["meta"]["href"])
-                )
-
-                q = p.get("quantity")
-                try:
-                    q = float(q)
-                except Exception:
-                    q = None
-                qty_ok = (q is not None and np.isfinite(q) and q > 0)
-
-                price = p.get("price")
-                price_ok = isinstance(price, (int, float))
-
-                if meta_ok and qty_ok and price_ok:
-                    valid_positions.append({
-                        "assortment": {
-                            "meta": {
-                                "href": ass["meta"]["href"],
-                                "type": ass["meta"].get("type", "product"),
-                                "mediaType": ass["meta"].get("mediaType", "application/json"),
-                            }
-                        },
-                        "quantity": float(q),
-                        "price": int(price),
-                    })
-                else:
-                    bad.append({"i": i, "assortment": ass, "quantity": p.get("quantity"), "price": price})
-            except Exception as e:
-                bad.append({"i": i, "error": str(e), "pos": p})
-
-        print("POSITIONS TOTAL:", len(positions), "VALID:", len(valid_positions), "BAD:", len(bad))
-        if bad:
-            print("BAD SAMPLES >>>", bad[:3])
-
-        positions = valid_positions
-        if not positions:
-            raise HTTPException(400, "Нет валидных позиций для добавления (quantity/assortment).")
-
-        # Отправляем только валидные позиции
+        # — как просил: без «rows», отправляем массив позиций как есть
         r_pos = await _request_with_backoff(
             client,
             "POST",
             f"{MS_API}/entity/supply/{supply_id}/positions",
-            json=positions,  # <-- массив позиций, без обёртки "rows"
+            json=positions,
         )
         if r_pos.status_code >= 400:
             msg = None
