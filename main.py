@@ -597,8 +597,30 @@ async def import_invoice_to_supply(
             else:
                 continue
 
+            q = float(qty or 0)
+            if not np.isfinite(q) or q <= 0:
+                q = 1.0
+
+            assortment_meta = None
+            # meta может быть как полная meta (из МС), так и {"meta": {...}}
+            if isinstance(meta, dict) and "href" in meta:
+                href = meta.get("href")
+                typ  = meta.get("type") or "product"
+                mt   = meta.get("mediaType") or "application/json"
+                assortment_meta = {"href": href, "type": typ, "mediaType": mt}
+            elif isinstance(meta, dict) and "meta" in meta and isinstance(meta["meta"], dict):
+                m = meta["meta"]
+                href = m.get("href")
+                typ  = m.get("type") or "product"
+                mt   = m.get("mediaType") or "application/json"
+                assortment_meta = {"href": href, "type": typ, "mediaType": mt}
+
+            # если meta так и не получили — пропускаем строку
+            if not (isinstance(assortment_meta, dict) and assortment_meta.get("href")):
+                continue
+
             positions.append({
-                "assortment": {"meta": meta_clean},
+                "assortment": {"meta": assortment_meta},
                 "quantity": q,
                 "price": int(round((cost_kgs or 0.0) * 100)),
             })
