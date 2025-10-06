@@ -284,8 +284,8 @@ async def update_product_prices(
     product_id: str,
     cost_kgs: Optional[float],
     sale_kgs: Optional[float],
-    kgs_currency_meta: Dict[str, Any],
-    america_price_type_meta: Dict[str, Any],
+    kgs_currency_meta: Dict[str, Any],        # ожидается {"meta": {...}}
+    america_price_type_meta: Dict[str, Any],  # ожидается {"meta": {...}}
 ) -> None:
     """
     Обновляет:
@@ -300,36 +300,38 @@ async def update_product_prices(
     prod = r.json()
     sale_prices = (prod.get("salePrices") or [])[:]
 
-    new_list = []
-    added = False
+    new_list: List[Dict[str, Any]] = []
+    found = False
+    target_href = america_price_type_meta["meta"]["href"]
+
     for sp in sale_prices:
-        pt_meta = sp.get("priceType", {}).get("meta", {})
-        if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
+        href = (((sp or {}).get("priceType") or {}).get("meta") or {}).get("href")
+        if href == target_href:
             # заменить только "Цена продажи Америка"
             if sale_kgs is not None:
                 new_list.append({
                     "value": int(round(sale_kgs * 100)),
-                    "currency": kgs_currency_meta["meta"],
-                    "priceType": america_price_type_meta["meta"],
+                    "currency": kgs_currency_meta,           # <-- передаём объект, а не ["meta"]
+                    "priceType": america_price_type_meta,     # <-- передаём объект, а не ["meta"]
                 })
             else:
                 new_list.append(sp)
-            added = True
+            found = True
         else:
             new_list.append(sp)
 
-    if not added and sale_kgs is not None:
+    if not found and sale_kgs is not None:
         new_list.append({
             "value": int(round(sale_kgs * 100)),
-            "currency": kgs_currency_meta["meta"],
-            "priceType": america_price_type_meta["meta"],
+            "currency": kgs_currency_meta,                 # <-- объект
+            "priceType": america_price_type_meta,          # <-- объект
         })
 
     payload: Dict[str, Any] = {"salePrices": new_list}
     if cost_kgs is not None:
         payload["buyPrice"] = {
             "value": int(round(cost_kgs * 100)),
-            "currency": kgs_currency_meta["meta"],
+            "currency": kgs_currency_meta,                 # <-- объект
         }
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
@@ -593,14 +595,14 @@ async def import_invoice_to_supply(
                 payload_product = {
                     "name": name_row,
                     "code": article,
-                    "buyPrice": {                      # ← закупочная (себестоимость)
+                    "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta["meta"],
+                        "currency": kgs_meta,
                     },
-                    "salePrices": [{                   # ← «Цена продажи Америка»
+                    "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta["meta"],
-                        "priceType": america_pt["meta"],
+                        "currency": kgs_meta,
+                        "priceType": america_pt,
                     }],
                 }
                 # ЕИ
