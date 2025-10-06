@@ -70,9 +70,13 @@ async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str
 
 async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
     r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata")
-    for a in r.json().get("attributes", []):
-        if (a.get("name") or "").strip().lower() == name.strip().lower():
-            return a
+    attrs = r.json().get("attributes") or []
+    target = (name or "").strip().lower()
+    for a in attrs:
+        if isinstance(a, dict):
+            n = (a.get("name") or "").strip().lower()
+            if n == target:
+                return a
     return None
 
 async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
