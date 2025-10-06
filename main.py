@@ -40,6 +40,23 @@ def _norm(s: Optional[str]) -> str:
 def _norm_low(s: Optional[str]) -> str:
     return _norm(s).casefold()
 
+def normalize_assortment_meta(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(meta, dict):
+        return None
+    m = None
+    if "href" in meta:
+        m = meta
+    elif "meta" in meta and isinstance(meta["meta"], dict) and "href" in meta["meta"]:
+        m = meta["meta"]
+    if not m:
+        return None
+    href = m.get("href")
+    if not href:
+        return None
+    typ = m.get("type") or "product"
+    mt  = m.get("mediaType") or "application/json"
+    return {"meta": {"href": href, "type": typ, "mediaType": mt}}
+
 async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str, **kw) -> httpx.Response:
     delay = 0.5
     for _ in range(6):
@@ -645,10 +662,19 @@ async def import_invoice_to_supply(
             if not assortment_meta:
                 continue
 
+            q = float(r.get("qty") or 0)
+            if not np.isfinite(q) or q <= 0:
+                q = 1.0
+
+            assortment = normalize_assortment_meta(meta)
+            if not assortment:
+                # если meta битый — пропустим строку, чтобы не сломать весь запрос
+                continue
+
             positions.append({
-                "assortment": {"meta": assortment_meta},               # корректная форма
-                "quantity": q,                                         # используем нормализованное q
-                "price": int(round((cost_kgs or 0.0) * 100)),          # сомы * 100
+                "assortment": assortment,
+                "quantity": q,
+                "price": int(round((cost_kgs or 0.0) * 100)),
             })
 
         if not positions:
@@ -692,6 +718,24 @@ async def import_invoice_to_supply(
         supply_id = supply.get("id")
         if not supply_id:
             raise HTTPException(500, "МС вернул ответ без id приёмки.")
+
+        bad = []
+        for i, p in enumerate(positions):
+            ok = (
+                isinstance(p.get("quantity"), (int, float)) and np.isfinite(p["quantity"]) and p["quantity"] > 0 and
+                isinstance(p.get("assortment"), dict) and
+                isinstance((p["assortment"].get("meta") or {}), dict) and
+                isinstance((p["assortment"]["meta"].get("href")), str) and p["assortment"]["meta"]["href"]
+            )
+            if not ok:
+                bad.append((i, p))
+        if bad:
+            # Увидишь в логах, какая именно позиция битая
+            print("BAD POSITIONS >>>", bad[:3])
+            raise HTTPException(400, "Есть битые позиции (quantity/assortment). См. логи BAD POSITIONS.")
+
+        # Для самопроверки:
+        print("SENDING POSITIONS SAMPLE >>>", positions[:2])
 
         r_pos = await _request_with_backoff(
             client,
