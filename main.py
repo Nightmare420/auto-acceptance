@@ -86,7 +86,6 @@ async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_m
 
 
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
-    col_manuf  = name2col.get("Производитель")
     ext = Path(filename).suffix.lower()
     engine = "openpyxl" if ext == ".xlsx" else ("xlrd" if ext == ".xls" else None)
     if not engine:
@@ -112,14 +111,7 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     col_unit    = name2col.get("Ед.") or name2col.get("Ед")
     col_price   = name2col.get("Цена")
     col_curr    = name2col.get("Валюта")
-
-    # --- ДОБАВЛЕНО: колонка производителя из Excel
-    col_producer = (
-        name2col.get("Производитель")
-        or name2col.get("Бренд")
-        or name2col.get("Марка")
-        or name2col.get("Производитель/Бренд")
-    )
+    col_manuf   = name2col.get("Производитель")  # <-- опционально
 
     data = raw.iloc[header_row_idx + 1:].copy()
 
@@ -136,24 +128,22 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
         data = data.loc[:stop_idx - 1]
 
     df = pd.DataFrame({
-        "article":  data[col_article] if col_article in data.columns else None,
-        "name":     data[col_name]    if col_name    in data.columns else None,
-        "qty":      data[col_qty]     if col_qty     in data.columns else 1,
-        "unit":     data[col_unit]    if col_unit    in data.columns else None,
-        "price":    data[col_price]   if col_price   in data.columns else None,
-        "currency": data[col_curr]    if col_curr    in data.columns else None,
-        "producer": data[col_producer] if col_producer in data.columns else None,
-        "manufacturer": data[col_manuf] if col_manuf in data.columns else None,
+        "article":      data[col_article] if col_article in data.columns else None,
+        "name":         data[col_name]    if col_name    in data.columns else None,
+        "qty":          data[col_qty]     if col_qty     in data.columns else 1,
+        "unit":         data[col_unit]    if col_unit    in data.columns else None,
+        "price":        data[col_price]   if col_price   in data.columns else None,
+        "currency":     data[col_curr]    if col_curr    in data.columns else None,
+        "manufacturer": data[col_manuf]   if col_manuf   in data.columns else None,  # <-- добавили
     })
 
-    df["manufacturer"] = df["manufacturer"].astype(str).str.strip() if "manufacturer" in df.columns else ""
-    df["article"]  = df["article"].astype(str).str.strip()
-    df["name"]     = df["name"].astype(str).str.strip()
-    if "producer" in df.columns:
-        df["producer"] = df["producer"].astype(str).fillna("").map(lambda x: x.strip() if x and x != "nan" else "")
+    df["article"]      = df["article"].astype(str).str.strip()
+    df["name"]         = df["name"].astype(str).str.strip()
+    df["qty"]          = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["price"]        = pd.to_numeric(df["price"], errors="coerce")
+    if "manufacturer" in df.columns:
+        df["manufacturer"] = df["manufacturer"].astype(str).fillna("").str.strip()
 
-    df["qty"]   = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
 
