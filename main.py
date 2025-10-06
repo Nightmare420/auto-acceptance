@@ -600,12 +600,19 @@ async def import_invoice_to_supply(
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
             # ← ДОБАВЛЯЕМ ПОЗИЦИЮ (фикс: раньше могли забывать)
-            if meta and qty and qty > 0:
-                positions.append({
-                    "assortment": meta,                      # строго {"meta": {...}}
-                    "quantity": float(qty),                  # не пустое и > 0
-                    "price": int(round(cost_kgs * 100)),     # цена позиции в копейках (себестоимость)
-                })
+            q = float(qty or 0)
+            if q <= 0:
+                q = 1.0
+
+            # assortment: гарантированно в формате {"meta": {...}}
+            assortment = meta if (isinstance(meta, dict) and "meta" in meta and isinstance(meta["meta"], dict)) else {"meta": meta}
+
+            # price: в копейках (сом * 100) — используем себестоимость
+            positions.append({
+                "assortment": assortment,
+                "quantity": q,
+                "price": int(round((cost_kgs or 0.0) * 100)),
+            })
 
         if not positions:
             raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
@@ -644,9 +651,6 @@ async def import_invoice_to_supply(
                 pass
             if not msg: msg = r.text
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
-
-        supply = r.json()
-        supply_id = supply["id"]
 
         # ДОБАВЛЯЕМ ПОЗИЦИИ ВНУТРИ ЭТОГО ЖЕ async with
         r_pos = await _request_with_backoff(
