@@ -107,7 +107,11 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     col_unit    = name2col.get("Ед.") or name2col.get("Ед")
     col_price   = name2col.get("Цена")
     col_curr    = name2col.get("Валюта")
-    col_manuf   = name2col.get("Производитель")
+    col_manuf = (
+    name2col.get("Производитель")
+    or name2col.get("Производ.")
+    or next((c for k, c in name2col.items() if _norm(k).lower().startswith("производ")), None)
+)
 
     data = raw.iloc[header_row_idx + 1:].copy()
 
