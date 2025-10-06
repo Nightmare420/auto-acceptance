@@ -619,10 +619,36 @@ async def import_invoice_to_supply(
             if not (isinstance(assortment_meta, dict) and assortment_meta.get("href")):
                 continue
 
+            q = float(qty or 0)
+            if not np.isfinite(q) or q <= 0:
+                q = 1.0
+
+            # meta может быть либо «сырой» (href/type/mediaType), либо {"meta": {...}}
+            assortment_meta = None
+            if isinstance(meta, dict):
+                if "href" in meta:
+                    # сырой meta из МС
+                    href = meta.get("href")
+                    typ  = meta.get("type") or "product"
+                    mt   = meta.get("mediaType") or "application/json"
+                    if href:
+                        assortment_meta = {"href": href, "type": typ, "mediaType": mt}
+                elif "meta" in meta and isinstance(meta["meta"], dict) and "href" in meta["meta"]:
+                    m   = meta["meta"]
+                    href = m.get("href")
+                    typ  = m.get("type") or "product"
+                    mt   = m.get("mediaType") or "application/json"
+                    if href:
+                        assortment_meta = {"href": href, "type": typ, "mediaType": mt}
+
+            # если meta не получили — позицию НЕ добавляем
+            if not assortment_meta:
+                continue
+
             positions.append({
-                "assortment": {"meta": assortment_meta},
-                "quantity": q,
-                "price": int(round((cost_kgs or 0.0) * 100)),
+                "assortment": {"meta": assortment_meta},               # корректная форма
+                "quantity": q,                                         # используем нормализованное q
+                "price": int(round((cost_kgs or 0.0) * 100)),          # сомы * 100
             })
 
         if not positions:
