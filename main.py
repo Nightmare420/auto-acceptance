@@ -284,8 +284,8 @@ async def update_product_prices(
     product_id: str,
     cost_kgs: Optional[float],
     sale_kgs: Optional[float],
-    kgs_currency_meta: Dict[str, Any],        # ожидается {"meta": {...}}
-    america_price_type_meta: Dict[str, Any],  # ожидается {"meta": {...}}
+    kgs_currency_meta: Dict[str, Any],
+    america_price_type_meta: Dict[str, Any],
 ) -> None:
     """
     Обновляет:
@@ -300,38 +300,36 @@ async def update_product_prices(
     prod = r.json()
     sale_prices = (prod.get("salePrices") or [])[:]
 
-    new_list: List[Dict[str, Any]] = []
-    found = False
-    target_href = america_price_type_meta["meta"]["href"]
-
+    new_list = []
+    added = False
     for sp in sale_prices:
-        href = (((sp or {}).get("priceType") or {}).get("meta") or {}).get("href")
-        if href == target_href:
+        pt_meta = sp.get("priceType", {}).get("meta", {})
+        if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
             # заменить только "Цена продажи Америка"
             if sale_kgs is not None:
                 new_list.append({
                     "value": int(round(sale_kgs * 100)),
-                    "currency": kgs_currency_meta,           # <-- передаём объект, а не ["meta"]
-                    "priceType": america_price_type_meta,     # <-- передаём объект, а не ["meta"]
+                    "currency": kgs_currency_meta["meta"],
+                    "priceType": america_price_type_meta["meta"],
                 })
             else:
                 new_list.append(sp)
-            found = True
+            added = True
         else:
             new_list.append(sp)
 
-    if not found and sale_kgs is not None:
+    if not added and sale_kgs is not None:
         new_list.append({
             "value": int(round(sale_kgs * 100)),
-            "currency": kgs_currency_meta,                 # <-- объект
-            "priceType": america_price_type_meta,          # <-- объект
+            "currency": kgs_currency_meta["meta"],
+            "priceType": america_price_type_meta["meta"],
         })
 
     payload: Dict[str, Any] = {"salePrices": new_list}
     if cost_kgs is not None:
         payload["buyPrice"] = {
             "value": int(round(cost_kgs * 100)),
-            "currency": kgs_currency_meta,                 # <-- объект
+            "currency": kgs_currency_meta["meta"],
         }
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
@@ -597,7 +595,7 @@ async def import_invoice_to_supply(
                     "code": article,
                     "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta,
+                        "currency": kgs_meta,          # <-- ОБЪЕКТ с meta внутри
                     },
                     "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
@@ -658,7 +656,6 @@ async def import_invoice_to_supply(
             "vatEnabled": bool(vat_enabled),
             "vatIncluded": bool(vat_included),
             **refs,
-            "positions": positions,
         }
         if name and str(name).strip():
             payload_supply["name"] = str(name).strip()
@@ -666,7 +663,6 @@ async def import_invoice_to_supply(
             payload_supply["moment"] = str(moment).strip()
 
         r = await _request_with_backoff(client, "POST", f"{MS_API}/entity/supply", json=payload_supply)
-
         if r.status_code in (401, 403):
             raise HTTPException(r.status_code, detail="Нет доступа к API МойСклад")
         if r.status_code >= 400:
@@ -690,6 +686,35 @@ async def import_invoice_to_supply(
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
 
         supply = r.json()
+        supply_id = supply["id"]
+    r_pos = await _request_with_backoff(
+        client,
+        "POST",
+        f"{MS_API}/entity/supply/{supply_id}/positions",
+        json={"rows": positions},   # <-- ВАЖНО: именно {"rows": [...]}
+    )
+
+    if r_pos.status_code >= 400:
+        msg = None
+        try:
+            body = r_pos.json()
+            if isinstance(body, dict):
+                errs = body.get("errors") or []
+                if errs:
+                    parts = []
+                    for e in errs:
+                        txt = e.get("error") or e.get("message") or "Ошибка"
+                        if e.get("code"):
+                            txt += f" (code {e['code']})"
+                        parts.append(txt)
+                    msg = "; ".join(parts)
+                elif body.get("message"):
+                    msg = body["message"]
+        except Exception:
+            pass
+        if not msg:
+            msg = r_pos.text
+        raise HTTPException(status_code=r_pos.status_code, detail=f"МС отклонил позиции: {msg}")
 
     return SupplyCreateResponse(
         created_positions=len(positions),
