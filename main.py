@@ -82,7 +82,10 @@ async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) ->
 
 # --- ДОБАВЛЕНО: установка строкового атрибута товара
 async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
-    payload = {"attributes": [{"meta": attr_meta["meta"], "value": value}]}
+    attr_id = attr_meta.get("id") or attr_meta.get("metadataUuid")
+    if not attr_id:
+        return
+    payload = {"attributes": [{"id": attr_id, "value": str(value)}]}
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
@@ -609,8 +612,8 @@ async def import_invoice_to_supply(
                 # --- ДОБАВЛЕНО: атрибут при создании товара
                 if producer_attr and producer_value:
                     payload_product["attributes"] = [{
-                        "meta": producer_attr["meta"],
-                        "value": producer_value
+                        "id": (producer_attr.get("id") or producer_attr.get("metadataUuid")),
+                        "value": str(producer_value)
                     }]
 
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
