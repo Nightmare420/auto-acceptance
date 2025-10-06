@@ -142,7 +142,9 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     df["qty"]          = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     df["price"]        = pd.to_numeric(df["price"], errors="coerce")
     if "manufacturer" in df.columns:
-        df["manufacturer"] = df["manufacturer"].astype(str).fillna("").str.strip()
+        df["manufacturer"] = df["manufacturer"].astype(str)
+        df["manufacturer"] = df["manufacturer"].replace({"nan": "", "NaN": "", "None": ""})
+        df["manufacturer"] = df["manufacturer"].str.strip()
 
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
@@ -553,6 +555,8 @@ async def import_invoice_to_supply(
             qty = float(r.get("qty") or 0)
             price_raw = r.get("price")
             manufacturer = _norm(r.get("manufacturer"))
+            if manufacturer.lower() in ("nan", "none", "null"):
+                manufacturer = ""
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
