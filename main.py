@@ -74,21 +74,19 @@ async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) ->
     attrs = r.json().get("attributes") or []
     target = (name or "").strip().lower()
     for a in attrs:
-        if isinstance(a, dict):
-            n = (a.get("name") or "").strip().lower()
-            if n == target:
-                return a
+        if isinstance(a, dict) and (a.get("name") or "").strip().lower() == target and a.get("id"):
+            # нам нужен id, потому что атрибуты передаются по id
+            return {"id": a["id"], "type": a.get("type")}
     return None
 
-# --- ДОБАВЛЕНО: установка строкового атрибута товара
 async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
-    attr_id = attr_meta.get("id") or attr_meta.get("metadataUuid")
-    if not attr_id:
-        return
-    payload = {"attributes": [{"id": attr_id, "value": str(value)}]}
+    # важное: использовать id атрибута, не meta
+    payload = {"attributes": [{"id": attr_meta["id"], "value": value}]}
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
+
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
+    col_manuf  = name2col.get("Производитель")
     ext = Path(filename).suffix.lower()
     engine = "openpyxl" if ext == ".xlsx" else ("xlrd" if ext == ".xls" else None)
     if not engine:
@@ -144,10 +142,11 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
         "unit":     data[col_unit]    if col_unit    in data.columns else None,
         "price":    data[col_price]   if col_price   in data.columns else None,
         "currency": data[col_curr]    if col_curr    in data.columns else None,
-        # --- ДОБАВЛЕНО:
         "producer": data[col_producer] if col_producer in data.columns else None,
+        "manufacturer": data[col_manuf] if col_manuf in data.columns else None,
     })
 
+    df["manufacturer"] = df["manufacturer"].astype(str).str.strip() if "manufacturer" in df.columns else ""
     df["article"]  = df["article"].astype(str).str.strip()
     df["name"]     = df["name"].astype(str).str.strip()
     if "producer" in df.columns:
@@ -565,6 +564,7 @@ async def import_invoice_to_supply(
             name_row = _norm(r.get("name")) or article
             qty = float(r.get("qty") or 0)
             price_raw = r.get("price")
+            manufacturer = _norm(r.get("manufacturer"))
 
             # --- ДОБАВЛЕНО: производитель из Excel
             producer_value = _norm(r.get("producer")) if "producer" in df.columns else ""
@@ -610,10 +610,10 @@ async def import_invoice_to_supply(
                     }],
                 }
                 # --- ДОБАВЛЕНО: атрибут при создании товара
-                if producer_attr and producer_value:
+                if producer_attr and manufacturer:
                     payload_product["attributes"] = [{
-                        "id": (producer_attr.get("id") or producer_attr.get("metadataUuid")),
-                        "value": str(producer_value)
+                        "id": producer_attr["id"],   # <-- именно id
+                        "value": manufacturer        # <-- строка
                     }]
 
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
