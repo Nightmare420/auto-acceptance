@@ -68,6 +68,17 @@ async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str
     r.raise_for_status()
     return r
 
+async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata")
+    for a in r.json().get("attributes", []):
+        if (a.get("name") or "").strip().lower() == name.strip().lower():
+            return a
+    return None
+
+async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
+    payload = {"attributes": [{"meta": attr_meta["meta"], "value": value}]}
+    await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
+
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     ext = Path(filename).suffix.lower()
     engine = "openpyxl" if ext == ".xlsx" else ("xlrd" if ext == ".xls" else None)
@@ -512,6 +523,18 @@ async def import_invoice_to_supply(
             organization_name=organization_name, store_name=store_name,
             agent_name=agent_name, auto_create_agent=auto_create_agent
         )
+        
+    producer_attr = await get_product_attr_meta_by_name(client, "Производитель")
+    producer_value = None
+    if producer_attr:
+        attr_type = (producer_attr.get("type") or "").lower()
+        if attr_type == "counterparty":
+            # если поле ссылочное на контрагента — кладём meta контрагента (поставщика)
+            if "agent" in refs and refs["agent"].get("meta"):
+                producer_value = refs["agent"]["meta"]
+    else:
+        # строковое/текстовое и пр. — пишем имя поставщика
+        producer_value = agent_name or ""
 
         kgs_meta = await get_kgs_currency_meta(client)
         america_pt = await get_price_type_meta_by_external_code(
@@ -561,6 +584,13 @@ async def import_invoice_to_supply(
                         "priceType": america_pt,
                     }],
                 }
+                
+                if producer_attr and producer_value is not None:
+                    payload_product["attributes"] = [{
+                        "meta": producer_attr["meta"],
+                        "value": producer_value
+                    }]
+
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
                 if rows_u:
