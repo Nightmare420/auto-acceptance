@@ -256,12 +256,29 @@ async def get_kgs_currency_meta(client: httpx.AsyncClient) -> Dict[str, Any]:
         raise HTTPException(400, "Не найдена валюта KGS в аккаунте.")
     return {"meta": rows[0]["meta"]}
 
-async def get_price_type_meta_by_external_code(client: httpx.AsyncClient, external_code: str) -> Dict[str, Any]:
+async def get_price_type_meta_by_external_code(
+    client: httpx.AsyncClient,
+    external_code: Optional[str] = None,
+    fallback_name: Optional[str] = None,
+) -> Dict[str, Any]:
     r = await _request_with_backoff(client, "GET", f"{MS_API}/context/companysettings/pricetype")
-    for pt in r.json():
-        if pt.get("externalCode") == external_code:
-            return {"meta": pt["meta"]}
-    raise HTTPException(400, "Не найден прайс-тип с указанным внешним кодом (Цена продажи Америка).")
+    items = r.json()
+
+    # 1) пробуем по externalCode
+    if external_code:
+        for pt in items:
+            if pt.get("externalCode") == external_code:
+                return {"meta": pt["meta"]}
+
+    # 2) если не нашли — пробуем по точному имени (без регистра)
+    if fallback_name:
+        fname = fallback_name.strip().lower()
+        for pt in items:
+            if (pt.get("name") or "").strip().lower() == fname:
+                return {"meta": pt["meta"]}
+
+    raise HTTPException(400, f"Не найден прайс-тип (externalCode={external_code!r}, name={fallback_name!r}).")
+
 
 async def update_product_prices(
     client: httpx.AsyncClient,
@@ -544,8 +561,16 @@ async def import_invoice_to_supply(
         )
 
         kgs_meta = await get_kgs_currency_meta(client)
-        america_pt = await get_price_type_meta_by_external_code(client, AMERICA_PRICE_TYPE_EXTCODE)
-        cost_pt    = await get_price_type_meta_by_external_code(client, COST_PRICE_TYPE_EXTCODE)
+        america_pt = await get_price_type_meta_by_external_code(
+            client,
+            AMERICA_PRICE_TYPE_EXTCODE,
+            fallback_name="Цена продажи Америка",
+        )
+        cost_pt = await get_price_type_meta_by_external_code(
+            client,
+            COST_PRICE_TYPE_EXTCODE,
+            fallback_name="Закупочная цена",
+        )
 
         codes = { _norm(r["article"]) for _, r in df.iterrows() }
         prod_cache = await prefetch_products_by_code(client, codes)
