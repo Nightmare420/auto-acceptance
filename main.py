@@ -20,6 +20,7 @@ MS_PASSWORD = os.environ.get("MS_PASSWORD")
 
 # внешний код прайс-типа "Цена продажи Америка"
 AMERICA_PRICE_TYPE_EXTCODE = "345befb9-8ffb-42ac-86ca-e24f76de1310"
+COST_PRICE_TYPE_EXTCODE = "bd72d8fc-55bc-11d9-848a-00112f43529a"
 
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
@@ -263,47 +264,64 @@ async def get_price_type_meta_by_external_code(client: httpx.AsyncClient, extern
     raise HTTPException(400, "Не найден прайс-тип с указанным внешним кодом (Цена продажи Америка).")
 
 async def update_product_prices(
-    client: httpx.AsyncClient, product_id: str,
-    cost_kgs: Optional[float], sale_kgs: Optional[float],
+    client: httpx.AsyncClient,
+    product_id: str,
+    cost_kgs: Optional[float],
+    sale_kgs: Optional[float],
     kgs_currency_meta: Dict[str, Any],
     america_price_type_meta: Dict[str, Any],
+    cost_price_type_meta: Dict[str, Any],
 ) -> None:
+    """
+    Обновляет:
+      - buyPrice (если cost_kgs задан)
+      - salePrices для двух прайс-типов:
+          * "Цена продажи Америка" (america_price_type_meta)
+          * "Закупочная" как прайс-тип (cost_price_type_meta)
+    """
     if cost_kgs is None and sale_kgs is None:
         return
+
+    # читаем текущие цены, чтобы не потерять остальные прайс-типы
     r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/{product_id}")
     prod = r.json()
     sale_prices = (prod.get("salePrices") or [])[:]
 
-    new_list = []
-    added = False
-    for sp in sale_prices:
-        pt_meta = sp.get("priceType", {}).get("meta", {})
-        if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
-            if sale_kgs is not None:
-                new_list.append({
-                    "value": int(round(sale_kgs * 100)),
-                    "currency": kgs_currency_meta["meta"],
-                    "priceType": america_price_type_meta["meta"],
-                })
+    def upsert_price(prices, price_type_href, value_kgs):
+        found = False
+        new = []
+        for sp in prices:
+            href = sp.get("priceType", {}).get("meta", {}).get("href")
+            if href == price_type_href:
+                found = True
+                if value_kgs is not None:
+                    new.append({
+                        "value": int(round(value_kgs * 100)),
+                        "currency": kgs_currency_meta["meta"],
+                        "priceType": {"meta": {"href": price_type_href, "type": "pricetype", "mediaType": "application/json"}},
+                    })
+                else:
+                    new.append(sp)
             else:
-                new_list.append(sp)
-            added = True
-        else:
-            new_list.append(sp)
-    if not added and sale_kgs is not None:
-        new_list.append({
-            "value": int(round(sale_kgs * 100)),
-            "currency": kgs_currency_meta["meta"],
-            "priceType": america_price_type_meta["meta"],
-        })
+                new.append(sp)
+        if not found and value_kgs is not None:
+            new.append({
+                "value": int(round(value_kgs * 100)),
+                "currency": kgs_currency_meta["meta"],
+                "priceType": {"meta": {"href": price_type_href, "type": "pricetype", "mediaType": "application/json"}},
+            })
+        return new
 
-    payload: Dict[str, Any] = {}
+    # апсерт двух прайс-типов
+    sale_prices = upsert_price(sale_prices, america_price_type_meta["meta"]["href"], sale_kgs)
+    sale_prices = upsert_price(sale_prices, cost_price_type_meta["meta"]["href"],    cost_kgs)
+
+    payload: Dict[str, Any] = {"salePrices": sale_prices}
     if cost_kgs is not None:
         payload["buyPrice"] = {
             "value": int(round(cost_kgs * 100)),
             "currency": kgs_currency_meta["meta"],
         }
-    payload["salePrices"] = new_list
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
@@ -483,12 +501,12 @@ async def import_invoice_to_supply(
     vat_included: bool = Form(True),
     auto_create_products: bool = Form(True),
     auto_create_agent: bool = Form(True),
-    price_currency: int = Form("usd"),
+    price_currency: str = Form("usd"),
     coef: float = Form(1.6),
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
     weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
-    prices_kgs: Optional[int] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
+    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
 ):
     import json
 
@@ -527,6 +545,7 @@ async def import_invoice_to_supply(
 
         kgs_meta = await get_kgs_currency_meta(client)
         america_pt = await get_price_type_meta_by_external_code(client, AMERICA_PRICE_TYPE_EXTCODE)
+        cost_pt    = await get_price_type_meta_by_external_code(client, COST_PRICE_TYPE_EXTCODE)
 
         codes = { _norm(r["article"]) for _, r in df.iterrows() }
         prod_cache = await prefetch_products_by_code(client, codes)
@@ -550,7 +569,8 @@ async def import_invoice_to_supply(
 
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
+                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt, cost_pt)
+
             else:
                 if not auto_create_products:
                     not_found.append(article)
@@ -562,11 +582,18 @@ async def import_invoice_to_supply(
                         "value": int(round(cost_kgs * 100)),
                         "currency": kgs_meta["meta"],
                     },
-                    "salePrices": [{
-                        "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta["meta"],
-                        "priceType": america_pt["meta"],
-                    }],
+                    "salePrices": [
+                        {   # Цена продажи Америка — формула
+                            "value": int(round(sale_kgs * 100)),
+                            "currency": kgs_meta["meta"],
+                            "priceType": america_pt["meta"],
+                        },
+                        {   # Закупочная как отдельный прайс-тип (дублируем buyPrice)
+                            "value": int(round(cost_kgs * 100)),
+                            "currency": kgs_meta["meta"],
+                            "priceType": cost_pt["meta"],
+                        },
+                    ],
                 }
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
