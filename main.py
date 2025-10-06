@@ -652,7 +652,13 @@ async def import_invoice_to_supply(
             if not msg: msg = r.text
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
 
-        # ДОБАВЛЯЕМ ПОЗИЦИИ ВНУТРИ ЭТОГО ЖЕ async with
+        # 2) получили id созданной Приёмки
+        supply = r.json()
+        supply_id = supply.get("id")
+        if not supply_id:
+            raise HTTPException(500, "МС вернул ответ без id приёмки.")
+
+        # 3) добавляем позиции (ОДИН РАЗ) — всё ещё внутри async with
         r_pos = await _request_with_backoff(
             client,
             "POST",
