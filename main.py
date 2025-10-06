@@ -20,7 +20,6 @@ MS_PASSWORD = os.environ.get("MS_PASSWORD")
 
 # внешний код прайс-типа "Цена продажи Америка"
 AMERICA_PRICE_TYPE_EXTCODE = "345befb9-8ffb-42ac-86ca-e24f76de1310"
-COST_PRICE_TYPE_EXTCODE = "bd72d8fc-55bc-11d9-848a-00112f43529a"
 
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
@@ -566,11 +565,6 @@ async def import_invoice_to_supply(
             AMERICA_PRICE_TYPE_EXTCODE,
             fallback_name="Цена продажи Америка",
         )
-        cost_pt = await get_price_type_meta_by_external_code(
-            client,
-            COST_PRICE_TYPE_EXTCODE,
-            fallback_name="Закупочная цена",
-        )
 
         codes = { _norm(r["article"]) for _, r in df.iterrows() }
         prod_cache = await prefetch_products_by_code(client, codes)
@@ -594,31 +588,25 @@ async def import_invoice_to_supply(
 
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt, cost_pt)
+                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
+
 
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                payload_product: Dict[str, Any] = {
+                payload_product = {
                     "name": name_row,
                     "code": article,
-                    "buyPrice": {
+                    "buyPrice": {                      # ← закупочная (себестоимость)
                         "value": int(round(cost_kgs * 100)),
                         "currency": kgs_meta["meta"],
                     },
-                    "salePrices": [
-                        {   # Цена продажи Америка — формула
-                            "value": int(round(sale_kgs * 100)),
-                            "currency": kgs_meta["meta"],
-                            "priceType": america_pt["meta"],
-                        },
-                        {   # Закупочная как отдельный прайс-тип (дублируем buyPrice)
-                            "value": int(round(cost_kgs * 100)),
-                            "currency": kgs_meta["meta"],
-                            "priceType": cost_pt["meta"],
-                        },
-                    ],
+                    "salePrices": [{                   # ← «Цена продажи Америка»
+                        "value": int(round(sale_kgs * 100)),
+                        "currency": kgs_meta["meta"],
+                        "priceType": america_pt["meta"],
+                    }],
                 }
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
                 rows_u = r_u.json().get("rows", [])
