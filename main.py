@@ -527,7 +527,7 @@ async def import_invoice_to_supply(
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
             product_id = found["id"] if found else None
-            meta = {"meta": found["meta"]} if found else None
+            meta = found["meta"] if found else None
 
             weight   = float(weights_map.get(idx, 0.0))
             sale_kgs = sale_map.get(idx)
@@ -569,7 +569,7 @@ async def import_invoice_to_supply(
                     data_c = None
 
                 if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
-                    meta = {"meta": data_c["meta"]}
+                    meta = data_c["meta"]
                     product_id = data_c.get("id")
                     created_products.append(article)
                     will_create.append({"article": article, "name": name_row})
@@ -581,7 +581,7 @@ async def import_invoice_to_supply(
                     )
                     rows_find = r_find.json().get("rows", [])
                     if rows_find:
-                        meta = {"meta": rows_find[0]["meta"]}
+                        meta = rows_find[0]["meta"]
                         product_id = rows_find[0]["id"]
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                     else:
@@ -609,9 +609,9 @@ async def import_invoice_to_supply(
 
             # price: в копейках (сом * 100) — используем себестоимость
             positions.append({
-                "assortment": assortment,
-                "quantity": q,
-                "price": int(round((cost_kgs or 0.0) * 100)),
+                "assortment": {"meta": meta},     # тут уже мы оборачиваем В ПОЗИЦИИ
+                "quantity": float(qty),
+                "price": int(round(cost_kgs * 100)),
             })
 
         if not positions:
