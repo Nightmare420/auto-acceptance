@@ -68,6 +68,7 @@ async def _request_with_backoff(client: httpx.AsyncClient, method: str, url: str
     r.raise_for_status()
     return r
 
+# --- ДОБАВЛЕНО: поиск доп.поля «Производитель»
 async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) -> Optional[Dict[str, Any]]:
     r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/metadata")
     attrs = r.json().get("attributes") or []
@@ -79,6 +80,7 @@ async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) ->
                 return a
     return None
 
+# --- ДОБАВЛЕНО: установка строкового атрибута товара
 async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
     payload = {"attributes": [{"meta": attr_meta["meta"], "value": value}]}
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
@@ -110,6 +112,14 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     col_price   = name2col.get("Цена")
     col_curr    = name2col.get("Валюта")
 
+    # --- ДОБАВЛЕНО: колонка производителя из Excel
+    col_producer = (
+        name2col.get("Производитель")
+        or name2col.get("Бренд")
+        or name2col.get("Марка")
+        or name2col.get("Производитель/Бренд")
+    )
+
     data = raw.iloc[header_row_idx + 1:].copy()
 
     stop_idx = None
@@ -125,18 +135,23 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
         data = data.loc[:stop_idx - 1]
 
     df = pd.DataFrame({
-        "article": data[col_article] if col_article in data.columns else None,
-        "name":    data[col_name]    if col_name    in data.columns else None,
-        "qty":     data[col_qty]     if col_qty     in data.columns else 1,
-        "unit":    data[col_unit]    if col_unit    in data.columns else None,
-        "price":   data[col_price]   if col_price   in data.columns else None,
-        "currency":data[col_curr]    if col_curr    in data.columns else None,
+        "article":  data[col_article] if col_article in data.columns else None,
+        "name":     data[col_name]    if col_name    in data.columns else None,
+        "qty":      data[col_qty]     if col_qty     in data.columns else 1,
+        "unit":     data[col_unit]    if col_unit    in data.columns else None,
+        "price":    data[col_price]   if col_price   in data.columns else None,
+        "currency": data[col_curr]    if col_curr    in data.columns else None,
+        # --- ДОБАВЛЕНО:
+        "producer": data[col_producer] if col_producer in data.columns else None,
     })
 
-    df["article"] = df["article"].astype(str).str.strip()
-    df["name"]    = df["name"].astype(str).str.strip()
-    df["qty"]     = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
-    df["price"]   = pd.to_numeric(df["price"], errors="coerce")
+    df["article"]  = df["article"].astype(str).str.strip()
+    df["name"]     = df["name"].astype(str).str.strip()
+    if "producer" in df.columns:
+        df["producer"] = df["producer"].astype(str).fillna("").map(lambda x: x.strip() if x and x != "nan" else "")
+
+    df["qty"]   = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
 
@@ -528,16 +543,8 @@ async def import_invoice_to_supply(
             agent_name=agent_name, auto_create_agent=auto_create_agent
         )
 
-        # ——— доп.поле «Производитель»
+        # ——— ДОБАВЛЕНО: берём метаданные строкового доп.поле «Производитель»
         producer_attr = await get_product_attr_meta_by_name(client, "Производитель")
-        producer_value = None
-        if producer_attr:
-            attr_type = (producer_attr.get("type") or "").lower()
-            if attr_type == "counterparty":
-                if "agent" in refs and refs["agent"].get("meta"):
-                    producer_value = refs["agent"]["meta"]  # meta контрагента
-            else:
-                producer_value = agent_name or ""          # строковое значение
 
         kgs_meta = await get_kgs_currency_meta(client)
         america_pt = await get_price_type_meta_by_external_code(
@@ -556,6 +563,11 @@ async def import_invoice_to_supply(
             qty = float(r.get("qty") or 0)
             price_raw = r.get("price")
 
+            # --- ДОБАВЛЕНО: производитель из Excel
+            producer_value = _norm(r.get("producer")) if "producer" in df.columns else ""
+            if producer_value.lower() == "nan":
+                producer_value = ""
+
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
             product_id = found["id"] if found else None
@@ -570,8 +582,8 @@ async def import_invoice_to_supply(
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
-                # — записываем «Производитель» в существующий продукт (если есть куда и что писать)
-                if producer_attr and producer_value is not None and product_id:
+                # --- ДОБАВЛЕНО: проставляем строковый атрибут «Производитель» из Excel
+                if producer_attr and producer_value and product_id:
                     try:
                         await upsert_product_attr(client, product_id, producer_attr, producer_value)
                     except Exception:
@@ -594,8 +606,8 @@ async def import_invoice_to_supply(
                         "priceType": america_pt,
                     }],
                 }
-                # — «Производитель» при создании
-                if producer_attr and producer_value is not None:
+                # --- ДОБАВЛЕНО: атрибут при создании товара
+                if producer_attr and producer_value:
                     payload_product["attributes"] = [{
                         "meta": producer_attr["meta"],
                         "value": producer_value
@@ -629,8 +641,8 @@ async def import_invoice_to_supply(
                         meta = rows_find[0]["meta"]
                         product_id = rows_find[0]["id"]
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-                        # — на всякий случай проставим «Производитель»
-                        if producer_attr and producer_value is not None and product_id:
+                        # --- ДОБАВЛЕНО: на всякий случай проставим атрибут
+                        if producer_attr and producer_value and product_id:
                             try:
                                 await upsert_product_attr(client, product_id, producer_attr, producer_value)
                             except Exception:
@@ -650,7 +662,6 @@ async def import_invoice_to_supply(
                                 msg = data_c["message"]
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
-            # — позиции (оставляю как у тебя)
             q = float(qty or 0)
             if not np.isfinite(q) or q <= 0:
                 q = 1.0
@@ -668,7 +679,6 @@ async def import_invoice_to_supply(
         if not positions:
             raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
 
-        # создаём Приёмку
         payload_supply: Dict[str, Any] = {
             "applicable": True,
             "vatEnabled": bool(vat_enabled),
@@ -700,7 +710,6 @@ async def import_invoice_to_supply(
                         msg = body["message"]
             except Exception:
                 pass
-        if r.status_code >= 400:
             if not msg: msg = r.text
             raise HTTPException(status_code=r.status_code, detail=f"МС отклонил запрос: {msg}")
 
@@ -709,7 +718,7 @@ async def import_invoice_to_supply(
         if not supply_id:
             raise HTTPException(500, "МС вернул ответ без id приёмки.")
 
-        # — как просил: без «rows», отправляем массив позиций как есть
+        # как у тебя: отправляем массив позиций как есть (без "rows")
         r_pos = await _request_with_backoff(
             client,
             "POST",
