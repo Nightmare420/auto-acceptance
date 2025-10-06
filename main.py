@@ -548,12 +548,12 @@ async def import_invoice_to_supply(
                     "code": article,
                     "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta,          # {"meta":...}
+                        "currency": kgs_meta,          # {"meta": ...}
                     },
                     "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta,          # {"meta":...}
-                        "priceType": america_pt,       # {"meta":...}
+                        "currency": kgs_meta,          # {"meta": ...}
+                        "priceType": america_pt,       # {"meta": ...}
                     }],
                 }
                 r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
