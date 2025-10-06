@@ -719,24 +719,56 @@ async def import_invoice_to_supply(
         if not supply_id:
             raise HTTPException(500, "МС вернул ответ без id приёмки.")
 
-        bad = []
+        valid_positions, bad = [], []
         for i, p in enumerate(positions):
-            ok = (
-                isinstance(p.get("quantity"), (int, float)) and np.isfinite(p["quantity"]) and p["quantity"] > 0 and
-                isinstance(p.get("assortment"), dict) and
-                isinstance((p["assortment"].get("meta") or {}), dict) and
-                isinstance((p["assortment"]["meta"].get("href")), str) and p["assortment"]["meta"]["href"]
-            )
-            if not ok:
-                bad.append((i, p))
+            try:
+                ass = p.get("assortment")
+                # доводим до формата {"meta": {...}}
+                if isinstance(ass, dict) and "meta" not in ass and "href" in ass:
+                    ass = {"meta": ass}
+
+                meta_ok = (
+                    isinstance(ass, dict) and
+                    isinstance(ass.get("meta"), dict) and
+                    isinstance(ass["meta"].get("href"), str) and bool(ass["meta"]["href"])
+                )
+
+                q = p.get("quantity")
+                try:
+                    q = float(q)
+                except Exception:
+                    q = None
+                qty_ok = (q is not None and np.isfinite(q) and q > 0)
+
+                price = p.get("price")
+                price_ok = isinstance(price, (int, float))
+
+                if meta_ok and qty_ok and price_ok:
+                    valid_positions.append({
+                        "assortment": {
+                            "meta": {
+                                "href": ass["meta"]["href"],
+                                "type": ass["meta"].get("type", "product"),
+                                "mediaType": ass["meta"].get("mediaType", "application/json"),
+                            }
+                        },
+                        "quantity": float(q),
+                        "price": int(price),
+                    })
+                else:
+                    bad.append({"i": i, "assortment": ass, "quantity": p.get("quantity"), "price": price})
+            except Exception as e:
+                bad.append({"i": i, "error": str(e), "pos": p})
+
+        print("POSITIONS TOTAL:", len(positions), "VALID:", len(valid_positions), "BAD:", len(bad))
         if bad:
-            # Увидишь в логах, какая именно позиция битая
-            print("BAD POSITIONS >>>", bad[:3])
-            raise HTTPException(400, "Есть битые позиции (quantity/assortment). См. логи BAD POSITIONS.")
+            print("BAD SAMPLES >>>", bad[:3])
 
-        # Для самопроверки:
-        print("SENDING POSITIONS SAMPLE >>>", positions[:2])
+        positions = valid_positions
+        if not positions:
+            raise HTTPException(400, "Нет валидных позиций для добавления (quantity/assortment).")
 
+        # Отправляем только валидные позиции
         r_pos = await _request_with_backoff(
             client,
             "POST",
