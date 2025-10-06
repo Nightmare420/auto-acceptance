@@ -124,20 +124,10 @@ async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) 
         await asyncio.sleep(0.05)
     return out
 
-# --- ДОБАВЛЕНО: детальный индекс совпадений по ЗП ---
+# --- индекс совпадений ЗП для поставщика ---
 async def fetch_po_index_for_agent(
     client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
 ) -> Dict[str, Dict[str, Any]]:
-    """
-    Индекс по заказам поставщику для агента:
-    {
-      code_lower: {
-        "name_from_ms": <наименование из МС>,
-        "orders": [{"number": <имя/номер ЗП>, "href": <ссылка>}...],
-        "qty_in_po": <кол-во позиций с этим кодом>
-      }
-    }
-    """
     out: Dict[str, Dict[str, Any]] = {}
     agent_meta = None
 
@@ -164,7 +154,6 @@ async def fetch_po_index_for_agent(
         )
         data = r.json()
         for po in data.get("rows", []):
-            # отфильтруем старые
             try:
                 ts = time.mktime(time.strptime(po.get("updated", "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
@@ -183,7 +172,6 @@ async def fetch_po_index_for_agent(
                 key = _norm_low(code)
                 bucket = out.setdefault(key, {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0})
                 bucket["qty_in_po"] += 1
-                # добавим заказ (уникально по номеру+ссылке)
                 if po_number or po_href:
                     if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
                         bucket["orders"].append({"number": po_number, "href": po_href})
@@ -193,16 +181,6 @@ async def fetch_po_index_for_agent(
 
     return out
 
-# --- КОНЕЦ добавления ---
-async def fetch_po_codes_for_agent(
-    client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
-) -> Set[str]:
-    """
-    Возвращает просто множество кодов (code_lower), встречающихся в ЗП
-    для указанного контрагента за последние `days` дней.
-    """
-    index = await fetch_po_index_for_agent(client, agent_name, days)
-    return set(index.keys())
 # ---------- PRICE ----------
 def _q2(x: float) -> float:
     return float(Decimal(str(x)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
@@ -223,11 +201,10 @@ def calc_sale_kgs(price_raw: Optional[float], currency_ui: str, coef: float,
         ship = float(shipping_per_kg_usd or 0.0)
         w    = float(weight_kg or 0.0)
         return _q2((p * coef + w * ship) * r)
-    # KGS: коэффициент, доставка/курс игнорируем
     return _q2(p * coef)
 
 def calc_cost_kgs(price_raw: Optional[float], currency_ui: str, usd_rate: Optional[float]) -> Optional[float]:
-    """СЕБЕСТОИМОСТЬ в сомах: price * курс (для USD) или как есть (KGS). Без коэффициента и доставки."""
+    """СЕБЕСТОИМОСТЬ в сомах: price * курс (для USD) или как есть (KGS)."""
     try:
         p = float(price_raw)
     except (TypeError, ValueError):
@@ -239,10 +216,9 @@ def calc_cost_kgs(price_raw: Optional[float], currency_ui: str, usd_rate: Option
         if not r:
             return None
         return _q2(p * r)
-    # KGS
     return _q2(p)
 
-# ---------- meta helpers (once per request) ----------
+# ---------- meta helpers ----------
 async def get_kgs_currency_meta(client: httpx.AsyncClient) -> Dict[str, Any]:
     r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/currency", params={"limit": 100})
     for row in r.json().get("rows", []):
@@ -262,22 +238,16 @@ async def get_price_type_meta_by_external_code(
 ) -> Dict[str, Any]:
     r = await _request_with_backoff(client, "GET", f"{MS_API}/context/companysettings/pricetype")
     items = r.json()
-
-    # 1) пробуем по externalCode
     if external_code:
         for pt in items:
             if pt.get("externalCode") == external_code:
                 return {"meta": pt["meta"]}
-
-    # 2) если не нашли — пробуем по точному имени (без регистра)
     if fallback_name:
-        fname = fallback_name.strip().lower()
+        fname = (fallback_name or "").strip().lower()
         for pt in items:
             if (pt.get("name") or "").strip().lower() == fname:
                 return {"meta": pt["meta"]}
-
     raise HTTPException(400, f"Не найден прайс-тип (externalCode={external_code!r}, name={fallback_name!r}).")
-
 
 async def update_product_prices(
     client: httpx.AsyncClient,
@@ -287,15 +257,10 @@ async def update_product_prices(
     kgs_currency_meta: Dict[str, Any],
     america_price_type_meta: Dict[str, Any],
 ) -> None:
-    """
-    Обновляет:
-      - buyPrice  (закупочная, в сомах)
-      - salePrices[Цена продажи Америка]
-    """
+    """Обновляет buyPrice и цену 'Цена продажи Америка' не затирая другие."""
     if cost_kgs is None and sale_kgs is None:
         return
 
-    # не затираем другие типы цен
     r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/{product_id}")
     prod = r.json()
     sale_prices = (prod.get("salePrices") or [])[:]
@@ -305,7 +270,6 @@ async def update_product_prices(
     for sp in sale_prices:
         pt_meta = sp.get("priceType", {}).get("meta", {})
         if pt_meta and pt_meta.get("href") == america_price_type_meta["meta"]["href"]:
-            # заменить только "Цена продажи Америка"
             if sale_kgs is not None:
                 new_list.append({
                     "value": int(round(sale_kgs * 100)),
@@ -334,7 +298,6 @@ async def update_product_prices(
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
-
 # ---------- API ----------
 app = FastAPI()
 app.add_middleware(
@@ -355,10 +318,8 @@ class PreviewRow(BaseModel):
     qty: float
     unit: Optional[str] = None
     price_raw: Optional[float] = None
-    # NEW: показываем две цены
-    cost_kgs: Optional[float] = None     # себестоимость (курс)
-    sale_kgs: Optional[float] = None     # цена продажи (формула)
-    # для совместимости: price_kgs = sale_kgs
+    cost_kgs: Optional[float] = None
+    sale_kgs: Optional[float] = None
     price_kgs: Optional[float] = None
     product_id: Optional[str] = None
     will_create: bool = False
@@ -384,16 +345,13 @@ async def import_invoice_preview(
     po_matches_list: List[Dict[str, Any]] = []
 
     async with httpx.AsyncClient(timeout=60.0, headers=ms_headers()) as client:
-        # товары по code=article
         codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        # индекс совпадений ЗП для агента
         po_index: Dict[str, Dict[str, Any]] = {}
         if agent_name:
             po_index = await fetch_po_index_for_agent(client, agent_name, po_days)
 
-        # наполним превью
         for _, r in df.iterrows():
             article = _norm(r["article"])
             name    = _norm(r.get("name"))
@@ -421,7 +379,6 @@ async def import_invoice_preview(
                 po_hit=po_hit,
             ))
 
-        # соберём список совпадений для отдельной таблицы (только по тем артикулам, что в файле)
         seen: Set[str] = set()
         for _, r in df.iterrows():
             article = _norm(r["article"])
@@ -449,8 +406,6 @@ async def import_invoice_preview(
         "rows": [r.model_dump() for r in rows],
         "note": "Вес вводится на фронте; цена продажи в KGS пересчитывается локально по формуле. Себестоимость = цена * курс.",
     }
-
-
 
 class SupplyCreateResponse(BaseModel):
     created_positions: int
@@ -516,7 +471,7 @@ async def import_invoice_to_supply(
     usd_rate: Optional[float] = Form(None),
     shipping_per_kg_usd: Optional[float] = Form(15.0),
     weights: Optional[str] = Form(None),     # JSON: {"0": 0.5, "1": 1.2, ...}
-    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — это ПРОДАЖА
+    prices_kgs: Optional[str] = Form(None),  # JSON: {"0": 1234, "1": 550, ...} — ПРОДАЖА
 ):
     import json
 
@@ -583,24 +538,21 @@ async def import_invoice_to_supply(
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
-
-
-
             else:
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-                payload_product = {
+                payload_product: Dict[str, Any] = {
                     "name": name_row,
                     "code": article,
                     "buyPrice": {
                         "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta,          # <-- ОБЪЕКТ с meta внутри
+                        "currency": kgs_meta["meta"],          # ← фикс
                     },
                     "salePrices": [{
                         "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta,
-                        "priceType": america_pt,
+                        "currency": kgs_meta["meta"],          # ← фикс
+                        "priceType": america_pt["meta"],       # ← фикс
                     }],
                 }
                 # ЕИ
@@ -609,7 +561,6 @@ async def import_invoice_to_supply(
                 if rows_u:
                     payload_product["uom"] = {"meta": rows_u[0]["meta"]}
 
-                # создаём товар
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
                 data_c = None
                 try:
@@ -618,13 +569,12 @@ async def import_invoice_to_supply(
                     data_c = None
 
                 if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
-                    # успех
                     meta = {"meta": data_c["meta"]}
                     product_id = data_c.get("id")
                     created_products.append(article)
                     will_create.append({"article": article, "name": name_row})
                 else:
-                    # попробуем взять существующий по коду (на случай "уже существует")
+                    # fallback — поиск по коду, если «уже существует»
                     r_find = await _request_with_backoff(
                         client, "GET", f"{MS_API}/entity/product",
                         params={"filter": f"code={article}", "limit": 1}
@@ -633,10 +583,8 @@ async def import_invoice_to_supply(
                     if rows_find:
                         meta = {"meta": rows_find[0]["meta"]}
                         product_id = rows_find[0]["id"]
-                        # считаем, что он "уже существовал"
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                     else:
-                        # сформируем читаемую ошибку из ответа МС
                         msg = "неизвестная ошибка"
                         if isinstance(data_c, dict):
                             if data_c.get("errors"):
@@ -650,7 +598,18 @@ async def import_invoice_to_supply(
                                 msg = data_c["message"]
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
 
+            # ← ДОБАВЛЯЕМ ПОЗИЦИЮ (фикс: раньше могли забывать)
+            if meta:
+                positions.append({
+                    "assortment": meta,                           # {"meta": {...}}
+                    "quantity": qty,
+                    "price": int(round(cost_kgs * 100)),          # закупочная в копейках
+                })
 
+        if not positions:
+            raise HTTPException(400, "Ни одной позиции не удалось сопоставить/создать.")
+
+        # создаём Приёмку
         payload_supply: Dict[str, Any] = {
             "applicable": True,
             "vatEnabled": bool(vat_enabled),
@@ -687,34 +646,34 @@ async def import_invoice_to_supply(
 
         supply = r.json()
         supply_id = supply["id"]
-    r_pos = await _request_with_backoff(
-        client,
-        "POST",
-        f"{MS_API}/entity/supply/{supply_id}/positions",
-        json={"rows": positions},   # <-- ВАЖНО: именно {"rows": [...]}
-    )
 
-    if r_pos.status_code >= 400:
-        msg = None
-        try:
-            body = r_pos.json()
-            if isinstance(body, dict):
-                errs = body.get("errors") or []
-                if errs:
-                    parts = []
-                    for e in errs:
-                        txt = e.get("error") or e.get("message") or "Ошибка"
-                        if e.get("code"):
-                            txt += f" (code {e['code']})"
-                        parts.append(txt)
-                    msg = "; ".join(parts)
-                elif body.get("message"):
-                    msg = body["message"]
-        except Exception:
-            pass
-        if not msg:
-            msg = r_pos.text
-        raise HTTPException(status_code=r_pos.status_code, detail=f"МС отклонил позиции: {msg}")
+        # ← ДОБАВЛЯЕМ ПОЗИЦИИ ВНУТРИ ТОГО ЖЕ async with (фикс клиента)
+        r_pos = await _request_with_backoff(
+            client,
+            "POST",
+            f"{MS_API}/entity/supply/{supply_id}/positions",
+            json={"rows": positions},
+        )
+        if r_pos.status_code >= 400:
+            msg = None
+            try:
+                body = r_pos.json()
+                if isinstance(body, dict):
+                    errs = body.get("errors") or []
+                    if errs:
+                        parts = []
+                        for e in errs:
+                            txt = e.get("error") or e.get("message") or "Ошибка"
+                            if e.get("code"): txt += f" (code {e['code']})"
+                            parts.append(txt)
+                        msg = "; ".join(parts)
+                    elif body.get("message"):
+                        msg = body["message"]
+            except Exception:
+                pass
+            if not msg:
+                msg = r_pos.text
+            raise HTTPException(status_code=r_pos.status_code, detail=f"МС отклонил позиции: {msg}")
 
     return SupplyCreateResponse(
         created_positions=len(positions),
