@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from decimal import Decimal, ROUND_HALF_UP
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 
 MS_API = os.environ.get("MS_API", "https://api.moysklad.ru/api/remap/1.2")
 MS_LOGIN = os.environ.get("MS_LOGIN")
@@ -327,6 +328,34 @@ async def update_product_prices(
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
+async def get_uom_sht_meta(client: httpx.AsyncClient) -> Dict[str, Any]:
+    for f in ("code=796", "name=шт"):
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"filter": f, "limit": 1})
+        rows = r.json().get("rows", [])
+        if rows:
+            return {"meta": rows[0]["meta"]}
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
+    rows = r.json().get("rows", [])
+    if rows:
+        return {"meta": rows[0]["meta"]}
+    raise HTTPException(400, "Не удалось получить ЕИ 'шт'.")
+
+async def ensure_product_uom_and_weight(client: httpx.AsyncClient, product_id: str, weight_kg: Optional[float]) -> None:
+    payload: Dict[str, Any] = {}
+    try:
+        payload["uom"] = (await get_uom_sht_meta(client))
+    except Exception:
+        pass
+    if weight_kg is not None:
+        try:
+            w = float(weight_kg)
+            if np.isfinite(w) and w >= 0:
+                payload["weight"] = w
+        except Exception:
+            pass
+    if payload:
+        await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -571,6 +600,7 @@ async def import_invoice_to_supply(
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, america_pt)
+                await ensure_product_uom_and_weight(client, product_id, weight)
                 if producer_attr and manufacturer and product_id:
                     try:
                         await upsert_product_attr(client, product_id, producer_attr, manufacturer)
@@ -594,16 +624,14 @@ async def import_invoice_to_supply(
                         "priceType": america_pt,
                     }],
                 }
+                if np.isfinite(weight) and weight >= 0:
+                    payload_product["weight"] = float(weight)
+                payload_product["uom"] = await get_uom_sht_meta(client)
                 if producer_attr and manufacturer:
                     payload_product["attributes"] = [{
                         "meta": producer_attr["meta"],
                         "value": manufacturer
                     }]
-
-                r_u = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"limit": 1})
-                rows_u = r_u.json().get("rows", [])
-                if rows_u:
-                    payload_product["uom"] = {"meta": rows_u[0]["meta"]}
 
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
                 data_c = None
@@ -627,6 +655,7 @@ async def import_invoice_to_supply(
                         meta = rows_find[0]["meta"]
                         product_id = rows_find[0]["id"]
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                        await ensure_product_uom_and_weight(client, product_id, weight)
                         if producer_attr and manufacturer and product_id:
                             try:
                                 await upsert_product_attr(client, product_id, producer_attr, manufacturer)
