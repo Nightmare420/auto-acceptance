@@ -73,12 +73,12 @@ async def get_product_attr_meta_by_name(client: httpx.AsyncClient, name: str) ->
     rows = r.json().get("rows") or []
     target = (name or "").strip().lower()
     for a in rows:
-        if isinstance(a, dict) and (a.get("name") or "").strip().lower() == target and a.get("id"):
-            return {"id": a["id"], "type": a.get("type")}
+        if isinstance(a, dict) and (a.get("name") or "").strip().lower() == target and isinstance(a.get("meta"), dict):
+            return {"meta": a["meta"], "type": a.get("type")}
     return None
 
 async def upsert_product_attr(client: httpx.AsyncClient, product_id: str, attr_meta: Dict[str, Any], value: Any) -> None:
-    payload = {"attributes": [{"id": attr_meta["id"], "value": value}]}
+    payload = {"attributes": [{"meta": attr_meta["meta"], "value": value}]}
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
 def read_invoice_excel(file, filename: str) -> pd.DataFrame:
@@ -108,10 +108,11 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     col_price   = name2col.get("Цена")
     col_curr    = name2col.get("Валюта")
     col_manuf = (
-    name2col.get("Производитель")
-    or name2col.get("Производ.")
-    or next((c for k, c in name2col.items() if _norm(k).lower().startswith("производ")), None)
-)
+        name2col.get("Производитель")
+        or name2col.get("Производ.")
+        or name2col.get("Производ")
+        or next((c for k, c in name2col.items() if _norm(k).lower().startswith("производ")), None)
+    )
 
     data = raw.iloc[header_row_idx + 1:].copy()
 
@@ -134,7 +135,7 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
         "unit":         data[col_unit]    if col_unit    in data.columns else None,
         "price":        data[col_price]   if col_price   in data.columns else None,
         "currency":     data[col_curr]    if col_curr    in data.columns else None,
-        "manufacturer": data[col_manuf]   if col_manuf   in data.columns else None,
+        "manufacturer": data[col_manuf] if col_manuf in data.columns else None,
     })
 
     df["article"]      = df["article"].astype(str).str.strip()
@@ -142,9 +143,7 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
     df["qty"]          = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     df["price"]        = pd.to_numeric(df["price"], errors="coerce")
     if "manufacturer" in df.columns:
-        df["manufacturer"] = df["manufacturer"].astype(str)
-        df["manufacturer"] = df["manufacturer"].replace({"nan": "", "NaN": "", "None": ""})
-        df["manufacturer"] = df["manufacturer"].str.strip()
+        df["manufacturer"] = df["manufacturer"].astype(str).str.strip().replace({"nan": ""})
 
     df = df[(df["qty"] > 0) & (df["article"].notna()) & (df["article"] != "")]
     return df.reset_index(drop=True)
@@ -597,7 +596,7 @@ async def import_invoice_to_supply(
                 }
                 if producer_attr and manufacturer:
                     payload_product["attributes"] = [{
-                        "id": producer_attr["id"],
+                        "meta": producer_attr["meta"],
                         "value": manufacturer
                     }]
 
