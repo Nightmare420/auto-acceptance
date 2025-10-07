@@ -69,7 +69,6 @@
     </div>
   </div>
 
-  <!-- Результаты -->
   <div class="card" id="results" style="display:none">
     <h3>Результаты</h3>
     <div id="summary" class="muted" style="margin:8px 0 12px"></div>
@@ -93,7 +92,6 @@
     </div>
   </div>
 
-  <!-- Совпадения с ЗП -->
   <div class="card" id="poMatches" style="display:none">
     <h3>Совпадения с заказами поставщика</h3>
     <div id="poSummary" class="muted" style="margin:6px 0 10px"></div>
@@ -133,10 +131,9 @@
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
-  // --- локальное состояние для весов/цен/строк превью
   let rowsCache = [];
-  const weightsMap = {};   // { idx: weight }
-  const pricesMap  = {};   // { idx: price_kgs }
+  const weightsMap = {};
+  const pricesMap  = {};
 
   function getCur() {
     for (const r of curRadios) if (r.checked) return r.value;
@@ -171,12 +168,10 @@
     if (btn !== importBtn)  importBtn.disabled = !!is;
   }
 
-  // округление до 0.01
   function q2(x) {
     return Math.round((x + Number.EPSILON) * 100) / 100;
   }
 
-  // пересчёт по формуле
   function computePriceKgs(row, weight) {
     const price = parseFloat(row.price_raw ?? NaN);
     const coef  = parseFloat(coefEl.value || '1') || 1;
@@ -186,7 +181,7 @@
       const rate = parseFloat(usdRateEl.value || '0') || 0;
       const ship = parseFloat(shipEl.value || '0')   || 0;
       const w    = parseFloat(weight || '0')         || 0;
-      if (!rate) return null; // нет курса — не считаем
+      if (!rate) return null;
       return q2((price * coef + w * ship) * rate);
     } else {
       return q2(price * coef);
@@ -204,17 +199,14 @@
   const form = new FormData();
   form.append('file', f);
 
-  // если это импорт — прикладываем веса и цены, которые пользователь насчитал локально
   if (path.includes('import-invoice-to-supply')) {
     form.append('weights', JSON.stringify(weightsMap));
     form.append('prices_kgs', JSON.stringify(pricesMap));
 
-    // уже было
     form.append('organization_name', (orgEl.value || '').trim());
     form.append('store_name',        (storeEl.value || '').trim());
     form.append('agent_name',        (agentEl.value || '').trim());
 
-    // >>> ДОБАВЬ ЭТО: ценовые параметры тоже в form-data
     form.append('price_currency', getCur());
     form.append('coef', String(parseFloat(coefEl.value || '1.6') || 1.6));
     if (getCur() === 'usd') {
@@ -223,7 +215,6 @@
       form.append('usd_rate', String(rate));
       form.append('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15') || 0));
     }
-    // <<< КОНЕЦ ДОБАВЛЕНИЯ
   }
 
   setLoading(btn, true); statusEl.textContent = '';
@@ -257,7 +248,6 @@
   }
 }
 
-  // ----- отрисовка основной таблицы -----
   function renderMainTable(rows) {
     const tb = document.querySelector("#mainTable tbody");
     tb.innerHTML = "";
@@ -280,7 +270,6 @@
     });
   }
 
-  // делегирование: мгновенный пересчёт при вводе веса
   document.addEventListener('input', (e) => {
     if (!e.target.classList?.contains('weightInput')) return;
     const idx = parseInt(e.target.dataset.row, 10);
@@ -298,7 +287,6 @@
     }
   });
 
-  // если меняют настройки цены (валюта/курс/коэф/доставка) — пересчитаем все строки
   function recalcAll() {
     document.querySelectorAll('.weightInput').forEach(inp => {
       const idx = parseInt(inp.dataset.row, 10);
@@ -315,7 +303,6 @@
   curRadios.forEach(r => r.addEventListener('change', recalcAll));
   ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
 
-  // ----- отрисовка совпадений ЗП -----
   function renderPoMatches(previewRows, poMatches) {
     const box = document.getElementById("poMatches");
     const sum = document.getElementById("poSummary");
