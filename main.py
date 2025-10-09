@@ -165,21 +165,8 @@ async def fetch_po_index_for_agent(
     client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
 ) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
-    agent_meta = None
 
-    if agent_name:
-        r = await _request_with_backoff(
-            client, "GET", f"{MS_API}/entity/counterparty",
-            params={"search": agent_name, "limit": 1}
-        )
-        rows = r.json().get("rows", [])
-        if rows:
-            agent_meta = rows[0]["meta"]
-
-    params = {"limit": 100, "expand": "positions.assortment"}
-    if agent_meta:
-        params["filter"] = f'agent={agent_meta["href"]}'
-
+    params = {"limit": 100, "expand": "positions.assortment"}  # ⬅️ без filter по агенту
     next_href = f"{MS_API}/entity/purchaseorder"
     until_ts = time.time() - days * 86400
 
@@ -198,10 +185,7 @@ async def fetch_po_index_for_agent(
                 pass
 
             po_number = po.get("name") or po.get("description") or ""
-            po_href = po.get("meta", {}).get("href", "")
-            po_moment = po.get("moment")
-            po_created= po.get("created")
-            po_updated= po.get("updated")   
+            po_href   = po.get("meta", {}).get("href", "")
 
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
@@ -209,16 +193,19 @@ async def fetch_po_index_for_agent(
                 if not code:
                     continue
                 key = _norm_low(code)
-                bucket = out.setdefault(key, {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0})
+                bucket = out.setdefault(
+                    key,
+                    {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0}
+                )
                 bucket["qty_in_po"] += 1
                 if po_number or po_href:
                     if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
                         bucket["orders"].append({
-                            "number": po_number,
-                            "href": po_href,
-                            "moment": po_moment,
-                            "created": po_created,
-                            "updated": po_updated,
+                            "number":  po_number,
+                            "href":    po_href,
+                            "moment":  po.get("moment"),
+                            "created": po.get("created"),
+                            "updated": po.get("updated"),
                         })
 
         next_href = data.get("meta", {}).get("nextHref")
@@ -415,9 +402,7 @@ async def import_invoice_preview(
         codes = {_norm(r["article"]) for _, r in df.iterrows()}
         prod_cache = await prefetch_products_by_code(client, codes)
 
-        po_index: Dict[str, Dict[str, Any]] = {}
-        if agent_name:
-            po_index = await fetch_po_index_for_agent(client, agent_name, po_days)
+        po_index: Dict[str, Dict[str, Any]] = await fetch_po_index_for_agent(client, agent_name, po_days)
 
         for _, r in df.iterrows():
             article = _norm(r["article"])
