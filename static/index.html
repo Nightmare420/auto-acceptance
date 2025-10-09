@@ -82,7 +82,7 @@
             <th>Ед.</th>
             <th>Цена из файла</th>
             <th>Вес (кг)</th>
-            <th>Цена (KGS)</th> 
+            <th>Цена (KGS)</th>
             <th>В ЗП</th>
             <th>Товар</th>
           </tr>
@@ -102,7 +102,7 @@
             <th>Артикул</th>
             <th>Наименование (файл)</th>
             <th>Наименование (МС)</th>
-            <th>№ заказа</th>
+            <th>№ заказа (с датой создания)</th>
             <th>Дата (moment)</th>
             <th>Создан</th>
             <th>Обновлён</th>
@@ -119,7 +119,8 @@
 
 <script>
 (function () {
-  const $ = (id) => document.getElementById(id);
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s || '').replace(/</g,'&lt;'); }
 
   const orgEl   = $('org');
   const storeEl = $('store');
@@ -140,7 +141,7 @@
   const pricesMap  = {};
 
   function getCur() {
-    for (const r of curRadios) if (r.checked) return r.value;
+    for (var i=0;i<curRadios.length;i++) if (curRadios[i].checked) return curRadios[i].value;
     return 'usd';
   }
 
@@ -172,12 +173,10 @@
     if (btn !== importBtn)  importBtn.disabled = !!is;
   }
 
-  function q2(x) {
-    return Math.round((x + Number.EPSILON) * 100) / 100;
-  }
+  function q2(x){ return Math.round((x + Number.EPSILON) * 100) / 100; }
 
   function computePriceKgs(row, weight) {
-    const price = parseFloat(row.price_raw ?? NaN);
+    const price = parseFloat((row.price_raw === undefined || row.price_raw === null) ? NaN : row.price_raw);
     const coef  = parseFloat(coefEl.value || '1') || 1;
     if (!isFinite(price)) return null;
 
@@ -192,96 +191,94 @@
     }
   }
 
- async function callApi(path, btn) {
-  const f = fileEl.files?.[0];
-  if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
+  async function callApi(path, btn) {
+    const f = (fileEl.files && fileEl.files[0]) || null;
+    if (!f) { statusEl.textContent = 'Выберите файл.'; return; }
 
-  let q; try { q = qParams(true); } catch (e) {
-    statusEl.textContent = e.message; return;
-  }
+    let q; try { q = qParams(true); } catch (e) {
+      statusEl.textContent = e.message; return;
+    }
 
-  const form = new FormData();
-  form.append('file', f);
+    const form = new FormData();
+    form.append('file', f);
 
-  if (path.includes('import-invoice-to-supply')) {
-    form.append('weights', JSON.stringify(weightsMap));
-    form.append('prices_kgs', JSON.stringify(pricesMap));
+    if (path.indexOf('import-invoice-to-supply') >= 0) {
+      form.append('weights', JSON.stringify(weightsMap));
+      form.append('prices_kgs', JSON.stringify(pricesMap));
+      form.append('organization_name', (orgEl.value || '').trim());
+      form.append('store_name',        (storeEl.value || '').trim());
+      form.append('agent_name',        (agentEl.value || '').trim());
+      form.append('price_currency', getCur());
+      form.append('coef', String(parseFloat(coefEl.value || '1.6') || 1.6));
+      if (getCur() === 'usd') {
+        const rate = parseFloat(usdRateEl.value || '');
+        if (!rate) { setLoading(btn,false); statusEl.textContent = 'Укажите курс доллара'; return; }
+        form.append('usd_rate', String(rate));
+        form.append('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15') || 0));
+      }
+    }
 
-    form.append('organization_name', (orgEl.value || '').trim());
-    form.append('store_name',        (storeEl.value || '').trim());
-    form.append('agent_name',        (agentEl.value || '').trim());
+    setLoading(btn, true); statusEl.textContent = '';
+    let data;
+    try {
+      const resp = await fetch(path + '?' + q.toString(), { method: 'POST', body: form });
+      const ct = resp.headers.get('content-type') || '';
+      data = (ct.indexOf('json') >= 0) ? await resp.json() : { error: await resp.text() };
+      if (!resp.ok) throw data;
+    } catch (e) {
+      console.error(e);
+      statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
+      setLoading(btn, false);
+      return;
+    }
+    setLoading(btn, false);
 
-    form.append('price_currency', getCur());
-    form.append('coef', String(parseFloat(coefEl.value || '1.6') || 1.6));
-    if (getCur() === 'usd') {
-      const rate = parseFloat(usdRateEl.value || '');
-      if (!rate) { setLoading(btn,false); statusEl.textContent = 'Укажите курс доллара'; return; }
-      form.append('usd_rate', String(rate));
-      form.append('shipping_per_kg_usd', String(parseFloat(shipEl.value || '15') || 0));
+    if (path.indexOf('preview') >= 0) {
+      rowsCache = data.rows || [];
+      for (var k in weightsMap) if (Object.prototype.hasOwnProperty.call(weightsMap,k)) delete weightsMap[k];
+      for (var k2 in pricesMap) if (Object.prototype.hasOwnProperty.call(pricesMap,k2)) delete pricesMap[k2];
+
+      renderMainTable(rowsCache);
+      renderPoMatches(rowsCache, data.po_matches || []);
+      $('results').style.display = '';
+      $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
+      $('summary').textContent = 'Строк: ' + data.rows_total + '. Создадим: ' + data.will_create_count +
+        '. Уже есть: ' + data.will_use_existing_count + '. Совпадений с заказами поставщика: ' + ((data.po_matches||[]).length) + '.';
+      statusEl.textContent = '';
+    } else {
+      statusEl.textContent = 'Готово. Документ Приёмки создан.';
     }
   }
-
-  setLoading(btn, true); statusEl.textContent = '';
-  let data;
-  try {
-    const resp = await fetch(`${path}?${q.toString()}`, { method: 'POST', body: form });
-    const ct = resp.headers.get('content-type') || '';
-    data = ct.includes('json') ? await resp.json() : { error: await resp.text() };
-    if (!resp.ok) throw data;
-  } catch (e) {
-    console.error(e);
-    statusEl.textContent = (e && e.detail) || (e && e.error) || 'Ошибка сети';
-    setLoading(btn, false);
-    return;
-  }
-  setLoading(btn, false);
-
-  if (path.includes('preview')) {
-    rowsCache = data.rows || [];
-    for (const k in weightsMap) delete weightsMap[k];
-    for (const k in pricesMap)  delete pricesMap[k];
-
-    renderMainTable(rowsCache);
-    renderPoMatches(rowsCache, data.po_matches || []);
-    $('results').style.display = '';
-    $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
-    $('summary').textContent = `Строк: ${data.rows_total}. Создадим: ${data.will_create_count}. Уже есть: ${data.will_use_existing_count}. Совпадений с заказами поставщика: ${(data.po_matches||[]).length}.`;
-    statusEl.textContent = '';
-  } else {
-    statusEl.textContent = 'Готово. Документ Приёмки создан.';
-  }
-}
 
   function renderMainTable(rows) {
     const tb = document.querySelector("#mainTable tbody");
     tb.innerHTML = "";
-    console.log(rows);
-        rows.forEach((r, idx) => {
-      const tr = document.createElement("tr");
+    for (var idx=0; idx<rows.length; idx++) {
+      var r = rows[idx];
       const priceText = (r.price_kgs != null) ? r.price_kgs : "";
-      tr.innerHTML = `
-        <td class="mono">${r.article || ""}</td>
-        <td>${(r.name || "").replaceAll("<","&lt;")}</td>
-        <td>${r.qty ?? ""}</td>
-        <td>${r.unit || ""}</td>
-        <td>${r.price_raw ?? ""}</td>
-        <td><input type="number" min="0" step="0.001" class="weightInput" data-row="${idx}" style="width:90px"/></td>
-        <td class="priceKgs" data-row="${idx}">${priceText}</td>
-        <td>${r.po_hit ? '<span class="chip ok">есть</span>' : '<span class="chip no">нет</span>'}</td>
-        <td>${r.will_create ? '<span class="chip no">создадим</span>' : '<span class="chip ok">существует</span>'}</td>
-      `;
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="mono">'+esc(r.article || "")+'</td>'+
+        '<td>'+esc(r.name)+'</td>'+
+        '<td>'+((r.qty !== undefined && r.qty !== null)? r.qty : '')+'</td>'+
+        '<td>'+esc(r.unit || "")+'</td>'+
+        '<td>'+((r.price_raw !== undefined && r.price_raw !== null)? r.price_raw : '')+'</td>'+
+        '<td><input type="number" min="0" step="0.001" class="weightInput" data-row="'+idx+'" style="width:90px"/></td>'+
+        '<td class="priceKgs" data-row="'+idx+'">'+(priceText === "" ? "" : priceText)+'</td>'+
+        '<td>'+(r.po_hit ? '<span class="chip ok">есть</span>' : '<span class="chip no">нет</span>')+'</td>'+
+        '<td>'+(r.will_create ? '<span class="chip no">создадим</span>' : '<span class="chip ok">существует</span>')+'</td>';
       tb.appendChild(tr);
-    });
+    }
   }
 
-  document.addEventListener('input', (e) => {
-    if (!e.target.classList?.contains('weightInput')) return;
+  document.addEventListener('input', function(e){
+    if (!(e.target.classList && e.target.classList.contains('weightInput'))) return;
     const idx = parseInt(e.target.dataset.row, 10);
     if (!rowsCache[idx]) return;
     const w = e.target.value;
     weightsMap[idx] = parseFloat(w || '0') || 0;
     const price = computePriceKgs(rowsCache[idx], weightsMap[idx]);
-    const cell = document.querySelector(`.priceKgs[data-row="${idx}"]`);
+    const cell = document.querySelector('.priceKgs[data-row="'+idx+'"]');
     if (price == null) {
       cell.textContent = '';
       delete pricesMap[idx];
@@ -292,95 +289,102 @@
   });
 
   function recalcAll() {
-    document.querySelectorAll('.weightInput').forEach(inp => {
+    var inputs = document.querySelectorAll('.weightInput');
+    for (var i=0;i<inputs.length;i++){
+      var inp = inputs[i];
       const idx = parseInt(inp.dataset.row, 10);
       const w = parseFloat(inp.value || '0') || 0;
       weightsMap[idx] = w;
       const price = computePriceKgs(rowsCache[idx], w);
-      const cell = document.querySelector(`.priceKgs[data-row="${idx}"]`);
+      const cell = document.querySelector('.priceKgs[data-row="'+idx+'"]');
       if (cell) {
         if (price == null) { cell.textContent = ''; delete pricesMap[idx]; }
         else { cell.textContent = price.toFixed(2); pricesMap[idx] = price; }
       }
-    });
-  }
-  curRadios.forEach(r => r.addEventListener('change', recalcAll));
-  ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
-
-function fmtDate(d) {
-  if (!d) return '';
-  // поддержим "YYYY-MM-DD HH:mm:ss" и ISO
-  const iso = d.includes('T') ? d : d.replace(' ', 'T') + 'Z';
-  const dt = new Date(iso);
-  return isNaN(dt.getTime()) ? d : dt.toLocaleString();
-}
-
-function renderPoMatches(previewRows, poMatches) {
-  const box = document.getElementById("poMatches");
-  const sum = document.getElementById("poSummary");
-  const tb  = document.querySelector("#poTable tbody");
-
-  if (!poMatches || !poMatches.length) {
-    box.style.display = "none";
-    return;
-  }
-
-  const nameByCode = {};
-  previewRows.forEach(r => { if (r.article) nameByCode[r.article.toLowerCase()] = r.name || ""; });
-
-  tb.innerHTML = "";
-
-  // Разворачиваем каждый заказ в отдельную строку
-  for (const m of poMatches) {
-    const code = String(m.article || '');
-    const nameFile = nameByCode[code.toLowerCase()] || '';
-    const nameMs   = m.name_from_ms || '';
-    const qtyInPo  = m.qty_in_po ?? 0;
-    const orders   = Array.isArray(m.orders) ? m.orders : [];
-
-    if (orders.length === 0) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td class="mono">${code}</td>
-        <td>${nameFile.replaceAll("<","&lt;")}</td>
-        <td>${nameMs.replaceAll("<","&lt;")}</td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td>${qtyInPo}</td>
-      `;
-      tb.appendChild(tr);
-      continue;
-    }
-
-    for (const o of orders) {
-      const num   = o.number || '';
-      const href  = o.href || '';
-      const moment  = fmtDate(o.moment);
-      const created = fmtDate(o.created);
-      const updated = fmtDate(o.updated);
-
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td class="mono">${code}</td>
-        <td>${nameFile.replaceAll("<","&lt;")}</td>
-        <td>${nameMs.replaceAll("<","&lt;")}</td>
-        <td>${num}</td>
-        <td>${moment}</td>
-        <td>${created}</td>
-        <td>${updated}</td>
-        <td>${href ? `<a href="${href}" target="_blank">открыть</a>` : ''}</td>
-        <td>${qtyInPo}</td>
-      `;
-      tb.appendChild(tr);
     }
   }
+  for (var i=0;i<curRadios.length;i++) curRadios[i].addEventListener('change', recalcAll);
+  ['usdRate','coef','ship'].forEach(function(id){ $(id).addEventListener('input', recalcAll); });
 
-  sum.textContent = `Найдено совпадений: ${poMatches.length}`;
-  box.style.display = "";
-}
+  function fmtDate(d) {
+    if (!d) return '';
+    var s = (String(d).indexOf('T') >= 0) ? d : (String(d).replace(' ', 'T') + 'Z');
+    var dt = new Date(s);
+    return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString();
+  }
+
+  function renderPoMatches(previewRows, poMatches) {
+    var box = document.getElementById("poMatches");
+    var sum = document.getElementById("poSummary");
+    var tb  = document.querySelector("#poTable tbody");
+
+    if (!poMatches || !poMatches.length) {
+      box.style.display = "none";
+      return;
+    }
+
+    var nameByCode = {};
+    for (var i=0;i<previewRows.length;i++){
+      var r = previewRows[i];
+      if (r.article) nameByCode[String(r.article).toLowerCase()] = r.name || "";
+    }
+
+    tb.innerHTML = "";
+
+    for (var mIdx=0; mIdx<poMatches.length; mIdx++) {
+      var m = poMatches[mIdx];
+      var code = String(m.article || '');
+      var nameFile = nameByCode[code.toLowerCase()] || '';
+      var nameMs   = m.name_from_ms || '';
+      var qtyInPo  = (m.qty_in_po !== undefined && m.qty_in_po !== null) ? m.qty_in_po : 0;
+      var orders   = Array.isArray(m.orders) ? m.orders : [];
+
+      if (!orders.length) {
+        var tr0 = document.createElement("tr");
+        tr0.innerHTML =
+          '<td class="mono">'+esc(code)+'</td>'+
+          '<td>'+esc(nameFile)+'</td>'+
+          '<td>'+esc(nameMs)+'</td>'+
+          '<td></td><td></td><td></td><td></td><td></td>'+
+          '<td>'+qtyInPo+'</td>';
+        tb.appendChild(tr0);
+        continue;
+      }
+
+      for (var j=0;j<orders.length;j++){
+        var o = orders[j];
+        var num     = o.number || '';
+        var href    = o.href || '';
+        var moment  = fmtDate(o.moment);
+        var created = fmtDate(o.created);
+        var updated = fmtDate(o.updated);
+
+        var numCell = href
+          ? '<a href="'+href+'" target="_blank">'+esc(num)+'</a> <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>'
+          : esc(num) + ' <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>';
+
+        var tr = document.createElement("tr");
+        tr.innerHTML =
+          '<td class="mono">'+esc(code)+'</td>'+
+          '<td>'+esc(nameFile)+'</td>'+
+          '<td>'+esc(nameMs)+'</td>'+
+          '<td>'+numCell+'</td>'+
+          '<td>'+esc(moment)+'</td>'+
+          '<td>'+esc(created)+'</td>'+
+          '<td>'+esc(updated)+'</td>'+
+          '<td>'+(href ? '<a href="'+href+'" target="_blank">открыть</a>' : '')+'</td>'+
+          '<td>'+qtyInPo+'</td>';
+        tb.appendChild(tr);
+      }
+    }
+
+    sum.textContent = 'Найдено совпадений: ' + poMatches.length;
+    box.style.display = "";
+  }
+
+  if (previewBtn) previewBtn.addEventListener('click', function(){ callApi('/import-invoice-preview/', previewBtn); });
+  if (importBtn)  importBtn.addEventListener('click',  function(){ callApi('/import-invoice-to-supply/', importBtn); });
+
 })();
 </script>
 </body>
