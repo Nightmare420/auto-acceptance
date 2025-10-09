@@ -199,6 +199,9 @@ async def fetch_po_index_for_agent(
 
             po_number = po.get("name") or po.get("description") or ""
             po_href = po.get("meta", {}).get("href", "")
+            po_moment = po.get("moment")
+            po_created= po.get("created")
+            po_updated= po.get("updated")   
 
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
@@ -210,7 +213,13 @@ async def fetch_po_index_for_agent(
                 bucket["qty_in_po"] += 1
                 if po_number or po_href:
                     if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
-                        bucket["orders"].append({"number": po_number, "href": po_href})
+                        bucket["orders"].append({
+                            "number": po_number,
+                            "href": po_href,
+                            "moment": po_moment,
+                            "created": po_created,
+                            "updated": po_updated,
+                        })
 
         next_href = data.get("meta", {}).get("nextHref")
         await asyncio.sleep(0.03)

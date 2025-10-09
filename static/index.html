@@ -82,7 +82,7 @@
             <th>Ед.</th>
             <th>Цена из файла</th>
             <th>Вес (кг)</th>
-            <th>Цена (KGS)</th>
+            <th>Цена (KGS)</th> 
             <th>В ЗП</th>
             <th>Товар</th>
           </tr>
@@ -102,7 +102,11 @@
             <th>Артикул</th>
             <th>Наименование (файл)</th>
             <th>Наименование (МС)</th>
-            <th>Заказы</th>
+            <th>№ заказа</th>
+            <th>Дата (moment)</th>
+            <th>Создан</th>
+            <th>Обновлён</th>
+            <th>Ссылка</th>
             <th>Кол-во в ЗП</th>
           </tr>
         </thead>
@@ -303,47 +307,80 @@
   curRadios.forEach(r => r.addEventListener('change', recalcAll));
   ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
 
-  function renderPoMatches(previewRows, poMatches) {
-    const box = document.getElementById("poMatches");
-    const sum = document.getElementById("poSummary");
-    const tb  = document.querySelector("#poTable tbody");
+function fmtDate(d) {
+  if (!d) return '';
+  // поддержим "YYYY-MM-DD HH:mm:ss" и ISO
+  const iso = d.includes('T') ? d : d.replace(' ', 'T') + 'Z';
+  const dt = new Date(iso);
+  return isNaN(dt.getTime()) ? d : dt.toLocaleString();
+}
 
-    if (!poMatches || !poMatches.length) {
-      box.style.display = "none"; return;
+function renderPoMatches(previewRows, poMatches) {
+  const box = document.getElementById("poMatches");
+  const sum = document.getElementById("poSummary");
+  const tb  = document.querySelector("#poTable tbody");
+
+  if (!poMatches || !poMatches.length) {
+    box.style.display = "none";
+    return;
+  }
+
+  const nameByCode = {};
+  previewRows.forEach(r => { if (r.article) nameByCode[r.article.toLowerCase()] = r.name || ""; });
+
+  tb.innerHTML = "";
+
+  // Разворачиваем каждый заказ в отдельную строку
+  for (const m of poMatches) {
+    const code = String(m.article || '');
+    const nameFile = nameByCode[code.toLowerCase()] || '';
+    const nameMs   = m.name_from_ms || '';
+    const qtyInPo  = m.qty_in_po ?? 0;
+    const orders   = Array.isArray(m.orders) ? m.orders : [];
+
+    if (orders.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${code}</td>
+        <td>${nameFile.replaceAll("<","&lt;")}</td>
+        <td>${nameMs.replaceAll("<","&lt;")}</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td>${qtyInPo}</td>
+      `;
+      tb.appendChild(tr);
+      continue;
     }
 
-    const nameByCode = {};
-    previewRows.forEach(r => { if (r.article) nameByCode[r.article.toLowerCase()] = r.name || ""; });
-
-    tb.innerHTML = "";
-    poMatches.forEach(m => {
-      const code = (m.article || "").toString();
-      const nameFile = nameByCode[code.toLowerCase()] || "";
-      const nameMs = m.name_from_ms || "";
-      const orders = (m.orders || []).map(o => {
-        const num = o.number || "";
-        const href = o.href || "#";
-        return `<a href="${href}" target="_blank">${num}</a>`;
-      }).join(", ");
+    for (const o of orders) {
+      const num   = o.number || '';
+      const href  = o.href || '';
+      const moment  = fmtDate(o.moment);
+      const created = fmtDate(o.created);
+      const updated = fmtDate(o.updated);
 
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="mono">${code}</td>
         <td>${nameFile.replaceAll("<","&lt;")}</td>
         <td>${nameMs.replaceAll("<","&lt;")}</td>
-        <td>${orders}</td>
-        <td>${m.qty_in_po ?? 0}</td>
+        <td>${num}</td>
+        <td>${moment}</td>
+        <td>${created}</td>
+        <td>${updated}</td>
+        <td>${href ? `<a href="${href}" target="_blank">открыть</a>` : ''}</td>
+        <td>${qtyInPo}</td>
       `;
       tb.appendChild(tr);
-    });
-
-    sum.textContent = `Найдено совпадений: ${poMatches.length}`;
-    box.style.display = "";
+    }
   }
 
-  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn));
-  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn));
-
+  sum.textContent = `Найдено совпадений: ${poMatches.length}`;
+  box.style.display = "";
+}
 })();
 </script>
 </body>
