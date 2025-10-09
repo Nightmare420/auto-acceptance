@@ -601,13 +601,6 @@ async def import_invoice_to_supply(
 
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-                await update_product_prices(client, product_id, cost_kgs, sale_kgs, kgs_meta, target_pt)
-                await ensure_product_uom_and_weight(client, product_id, weight)
-                if producer_attr and manufacturer and product_id:
-                    try:
-                        await upsert_product_attr(client, product_id, producer_attr, manufacturer)
-                    except Exception:
-                        pass
             else:
                 if not auto_create_products:
                     not_found.append(article)
@@ -657,12 +650,6 @@ async def import_invoice_to_supply(
                         meta = rows_find[0]["meta"]
                         product_id = rows_find[0]["id"]
                         will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-                        await ensure_product_uom_and_weight(client, product_id, weight)
-                        if producer_attr and manufacturer and product_id:
-                            try:
-                                await upsert_product_attr(client, product_id, producer_attr, manufacturer)
-                            except Exception:
-                                pass
                     else:
                         msg = "неизвестная ошибка"
                         if isinstance(data_c, dict):
