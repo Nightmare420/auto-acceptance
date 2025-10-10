@@ -143,15 +143,20 @@
   const pricesMap  = {};
   let poMatchesCache = [];
 
-  function isDoneState(s) {
-    if (!s) return false;
-    s = String(s).trim().toLowerCase();
-    return ["Выполнен","Выполнено","Выполнена","Completed","Исполнен"].includes(s);
+  function isDoneState(stateObjOrName) {
+    const name = (stateObjOrName && typeof stateObjOrName === 'object')
+      ? (stateObjOrName.name || '')
+      : (stateObjOrName || '');
+    const s = String(name).trim().toLowerCase();
+    return ["выполнен","выполнено","выполнена","completed","исполнен"].includes(s);
   }
-  function statusBadge(s) {
-    const t = (s || "").trim();
-    const cls = isDoneState(t) ? "no" : (t ? "ok" : "");
-    return t ? `<span class="chip ${cls}">${t}</span>` : "";
+  function statusBadge(stateObjOrName) {
+    const name = (stateObjOrName && typeof stateObjOrName === 'object')
+      ? (stateObjOrName.name || '')
+      : (stateObjOrName || '');
+    if (!name) return "";
+    const cls = isDoneState(name) ? "no" : "ok";
+    return `<span class="chip ${cls}">${name}</span>`;
   }
 
   function getCur() {
@@ -320,9 +325,8 @@
 
   function fmtDate(d) {
     if (!d) return '';
-    const s = (String(d).includes('T') ? String(d) : (String(d).replace(' ', 'T') + 'Z'));
-    const dt = new Date(s);
-    return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString();
+    const s = String(d).replace('T', ' ').replace('Z','');
+    return s.replace(/\.\d+$/, '');
   }
 
   function renderPoMatches(previewRows, poMatches) {
@@ -346,16 +350,16 @@
       const qtyInPo  = (m.qty_in_po != null) ? m.qty_in_po : 0;
       const orders   = Array.isArray(m.orders) ? m.orders : [];
 
-      const filtered = orders.filter(o => showDone || !isDoneState(o.state));
+      const filtered = orders.filter(ord => $('showDone')?.checked || !isDoneState(ord.state));
       if (!filtered.length) continue;
 
       for (const o of filtered) {
         const num     = o.number || '';
         const href    = o.href || '';
-        const state   = o.state || '';
-        const moment  = fmtDate(o.moment);
-        const created = fmtDate(o.created);
-        const updated = fmtDate(o.updated);
+        const stateObj = o.state || null;
+        const moment   = fmtDate(o.moment);
+        const created  = fmtDate(o.created);
+        const updated  = fmtDate(o.updated);
 
         const numCell = href
           ? '<a href="'+href+'" target="_blank">'+esc(num)+'</a> <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>'
@@ -367,7 +371,7 @@
           '<td>'+esc(nameFile)+'</td>'+
           '<td>'+esc(nameMs)+'</td>'+
           '<td>'+numCell+'</td>'+
-          '<td>'+statusBadge(state)+'</td>'+
+          '<td>'+statusBadge(stateObj)+'</td>'+
           '<td>'+esc(moment)+'</td>'+
           '<td>'+esc(created)+'</td>'+
           '<td>'+esc(updated)+'</td>'+
