@@ -175,9 +175,16 @@ async def fetch_po_index_for_agent(
 ) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
 
+    # ВАЖНО: добавили expand=state, чтобы сразу получить имя статуса
     params = {"limit": 100, "expand": "positions.assortment,state"}
     next_href = f"{MS_API}/entity/purchaseorder"
     until_ts = time.time() - days * 86400
+
+    # Набор «завершённых» статусов (сравниваем casefold)
+    completed_states = {
+        "выполнен", "выполнено", "выполнена", "исполнен", "исполнено",
+        "completed", "done", "closed", "закрыт", "закрыто"
+    }
 
     while next_href:
         r = await _request_with_backoff(
@@ -185,30 +192,43 @@ async def fetch_po_index_for_agent(
             params=params if next_href.endswith("purchaseorder") else None
         )
         data = r.json()
+
         for po in data.get("rows", []):
+            # Фильтр по дате обновления
             try:
-                ts = time.mktime(time.strptime(po.get("updated", "")[:19], "%Y-%m-%d %H:%M:%S"))
+                ts = time.mktime(time.strptime((po.get("updated", "") or "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
                     continue
             except Exception:
                 pass
 
-                state_obj  = po.get("state") or {}
-                if is_done_state(state_obj):
-                    continue
-                state_name = state_obj.get("name")
+            # Безопасно достаём название статуса (может не быть)
+            state_name = ""
+            state_obj = po.get("state") or {}
+            if isinstance(state_obj, dict):
+                state_name = (state_obj.get("name") or "").strip()
+
+            # Пропускаем выполненные
+            if state_name.casefold() in completed_states:
+                continue
 
             po_number = po.get("name") or po.get("description") or ""
-            po_href = po.get("meta", {}).get("href", "")
+            po_href = (po.get("meta") or {}).get("href", "")
 
+            # Перебор позиций
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
                 code = (a.get("code") or "").strip()
                 if not code:
                     continue
+
                 key = _norm_low(code)
-                bucket = out.setdefault(key, {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0})
+                bucket = out.setdefault(
+                    key,
+                    {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0}
+                )
                 bucket["qty_in_po"] += 1
+
                 if po_number or po_href:
                     if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
                         bucket["orders"].append({
@@ -217,7 +237,7 @@ async def fetch_po_index_for_agent(
                             "state": state_name or ""
                         })
 
-        next_href = data.get("meta", {}).get("nextHref")
+        next_href = (data.get("meta") or {}).get("nextHref")
         await asyncio.sleep(0.03)
 
     return out
