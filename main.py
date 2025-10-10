@@ -192,7 +192,7 @@ async def fetch_po_index_for_agent(
         data = r.json()
 
         for po in data.get("rows", []):
-            # updated-фильтр
+            
             try:
                 ts = time.mktime(time.strptime((po.get("updated", "") or "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
@@ -200,7 +200,7 @@ async def fetch_po_index_for_agent(
             except Exception:
                 pass
 
-            # статус
+            
             state_name = ""
             state_obj = po.get("state") or {}
             if isinstance(state_obj, dict):
@@ -208,14 +208,13 @@ async def fetch_po_index_for_agent(
             if state_name.casefold() in completed_states:
                 continue
 
-            # реквизиты заказа + времена
+            
             po_number  = po.get("name") or po.get("description") or ""
             po_href    = (po.get("meta") or {}).get("href", "")
-            po_created = po.get("created") or ""  # время создания (UTC строка из МС)
-            po_moment  = po.get("moment")  or ""  # «момент» документа
-            po_updated = po.get("updated") or ""  # время последнего изменения
+            po_created = po.get("created") or ""
+            po_moment  = po.get("moment")  or ""
+            po_updated = po.get("updated") or ""
 
-            # позиции
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
                 code = (a.get("code") or "").strip()
@@ -410,6 +409,7 @@ class PreviewRow(BaseModel):
     product_id: Optional[str] = None
     will_create: bool = False
     po_hit: bool = False
+    manufacturer: Optional[str] = None
 
 @app.post("/import-invoice-preview/")
 async def import_invoice_preview(
@@ -442,6 +442,7 @@ async def import_invoice_preview(
             qty     = float(r.get("qty") or 0)
             unit    = _norm(r.get("unit"))
             price   = r.get("price")
+            manufacturer = _norm(r.get("manufacturer"))
 
             code_key = _norm_low(article)
             found = prod_cache.get(code_key)
@@ -461,7 +462,13 @@ async def import_invoice_preview(
                 product_id=product_id,
                 will_create=will_create,
                 po_hit=po_hit,
+                manufacturer=manufacturer or None,
             ))
+
+            manufacturer_map: Dict[str, str] = {}
+            for _, r in df.iterrows():
+                k = _norm_low(_norm(r["article"]))
+                manufacturer_map[k] = _norm(r.get("manufacturer"))
 
         seen: Set[str] = set()
         for _, r in df.iterrows():
@@ -478,6 +485,7 @@ async def import_invoice_preview(
                 "name_from_ms": info.get("name_from_ms") or "",
                 "orders": info.get("orders") or [],
                 "qty_in_po": int(info.get("qty_in_po") or 0),
+                "manufacturer": manufacturer_map.get(key) or "",
             })
 
     return {
