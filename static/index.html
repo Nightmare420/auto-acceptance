@@ -5,7 +5,7 @@
   <title>Импорт Приёмки — МойСклад</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --accent:#2563eb; --danger:#ef4444; --ok:#16a34a; --radius:12px; --space:14px; --maxw:1100px; }
+    :root { --bg:#f8fafc; --card:#fff; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --ok:#16a34a; --danger:#ef4444; --radius:12px; --space:14px; --maxw:1100px; }
     *{box-sizing:border-box} html,body{height:100%}
     body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;display:flex;justify-content:center}
     .container{width:100%;max-width:var(--maxw);padding:24px 16px}
@@ -27,7 +27,7 @@
     .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
     .chip.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
     .chip.no{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
   </style>
 </head>
 <body>
@@ -75,7 +75,7 @@
       <table id="mainTable">
         <thead>
           <tr>
-            <th>Артикул</th>
+            <th>Артикул (станет code)</th>
             <th>Наименование (файл)</th>
             <th>Кол-во</th>
             <th>Ед.</th>
@@ -122,7 +122,29 @@
 <script>
 (function () {
   function $(id){ return document.getElementById(id); }
-  function esc(s){ return String(s || '').replace(/</g,'&lt;'); }
+  function esc(s){ return String(s ?? '').replace(/</g,'&lt;'); }
+
+  function normStateName(v){
+    if (!v) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') return v.name || v.title || v.value || '';
+    return '';
+  }
+  function isDoneState(v){
+    const s = normStateName(v).trim().toLowerCase();
+    return ['выполнен','выполнено','выполнена','completed','исполнен'].includes(s);
+  }
+  function statusBadge(v){
+    const name = normStateName(v);
+    if (!name) return '';
+    const cls = isDoneState(v) ? 'no' : 'ok';
+    return `<span class="chip ${cls}">${name}</span>`;
+  }
+
+  function fmtDate(raw){
+    if (!raw) return '';
+    return String(raw).replace('T',' ').replace('Z','').replace(/\.\d+$/,'');
+  }
 
   const orgEl   = $('org');
   const storeEl = $('store');
@@ -135,32 +157,17 @@
 
   const previewBtn = $('previewBtn');
   const importBtn  = $('importBtn');
+  const showDoneEl = $('showDone');
 
   const curRadios = document.querySelectorAll('input[name="currency"]');
 
   let rowsCache = [];
+  let poMatchesCache = [];
   const weightsMap = {};
   const pricesMap  = {};
-  let poMatchesCache = [];
-
-  function isDoneState(stateObjOrName) {
-    const name = (stateObjOrName && typeof stateObjOrName === 'object')
-      ? (stateObjOrName.name || '')
-      : (stateObjOrName || '');
-    const s = String(name).trim().toLowerCase();
-    return ["выполнен","выполнено","выполнена","completed","исполнен"].includes(s);
-  }
-  function statusBadge(stateObjOrName) {
-    const name = (stateObjOrName && typeof stateObjOrName === 'object')
-      ? (stateObjOrName.name || '')
-      : (stateObjOrName || '');
-    if (!name) return "";
-    const cls = isDoneState(name) ? "no" : "ok";
-    return `<span class="chip ${cls}">${name}</span>`;
-  }
 
   function getCur() {
-    for (let i=0;i<curRadios.length;i++) if (curRadios[i].checked) return curRadios[i].value;
+    for (const r of curRadios) if (r.checked) return r.value;
     return 'usd';
   }
 
@@ -198,7 +205,6 @@
     const price = parseFloat((row.price_raw === undefined || row.price_raw === null) ? NaN : row.price_raw);
     const coef  = parseFloat(coefEl.value || '1') || 1;
     if (!isFinite(price)) return null;
-
     if (getCur() === 'usd') {
       const rate = parseFloat(usdRateEl.value || '0') || 0;
       const ship = parseFloat(shipEl.value || '0')   || 0;
@@ -221,7 +227,7 @@
     const form = new FormData();
     form.append('file', f);
 
-    if (path.indexOf('import-invoice-to-supply') >= 0) {
+    if (path.includes('import-invoice-to-supply')) {
       form.append('weights', JSON.stringify(weightsMap));
       form.append('prices_kgs', JSON.stringify(pricesMap));
       form.append('organization_name', (orgEl.value || '').trim());
@@ -242,7 +248,7 @@
     try {
       const resp = await fetch(path + '?' + q.toString(), { method: 'POST', body: form });
       const ct = resp.headers.get('content-type') || '';
-      data = (ct.indexOf('json') >= 0) ? await resp.json() : { error: await resp.text() };
+      data = (ct.includes('json')) ? await resp.json() : { error: await resp.text() };
       if (!resp.ok) throw data;
     } catch (e) {
       console.error(e);
@@ -252,18 +258,18 @@
     }
     setLoading(btn, false);
 
-    if (path.indexOf('preview') >= 0) {
+    if (path.includes('preview')) {
       rowsCache = data.rows || [];
-      for (const k in weightsMap) delete weightsMap[k];
-      for (const k2 in pricesMap)  delete pricesMap[k2];
-
       poMatchesCache = data.po_matches || [];
+      for (const k in weightsMap) delete weightsMap[k];
+      for (const k2 in pricesMap) delete pricesMap[k2];
+
       renderMainTable(rowsCache);
       renderPoMatches(rowsCache, poMatchesCache);
       $('results').style.display = '';
       $('poMatches').style.display = (poMatchesCache.length) ? '' : 'none';
-      $('summary').textContent = 'Строк: ' + data.rows_total + '. Создадим: ' + data.will_create_count +
-        '. Уже есть: ' + data.will_use_existing_count + '. Совпадений с заказами поставщика: ' + (poMatchesCache.length) + '.';
+      $('summary').textContent = 'Строк: ' + (data.rows_total ?? rowsCache.length) + '. Создадим: ' + (data.will_create_count ?? 0) +
+        '. Уже есть: ' + (data.will_use_existing_count ?? 0) + '. Совпадений с заказами поставщика: ' + poMatchesCache.length + '.';
       statusEl.textContent = '';
     } else {
       statusEl.textContent = 'Готово. Документ Приёмки создан.';
@@ -290,7 +296,7 @@
     });
   }
 
-  document.addEventListener('input', (e) => {
+  document.addEventListener('input', function(e){
     if (!e.target.classList?.contains('weightInput')) return;
     const idx = parseInt(e.target.dataset.row, 10);
     if (!rowsCache[idx]) return;
@@ -323,76 +329,97 @@
   curRadios.forEach(r => r.addEventListener('change', recalcAll));
   ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
 
-  function fmtDate(d) {
-    if (!d) return '';
-    const s = String(d).replace('T', ' ').replace('Z','');
-    return s.replace(/\.\d+$/, '');
-  }
-
-  function renderPoMatches(previewRows, poMatches) {
+  function renderPoMatches(previewRows, poMatches){
     const box = $('poMatches');
     const sum = $('poSummary');
-    const tb  = document.querySelector("#poTable tbody");
-    const showDone = $('showDone')?.checked;
+    const tb  = document.querySelector('#poTable tbody');
+    const showDone = showDoneEl?.checked;
 
-    if (!poMatches || !poMatches.length) { box.style.display = "none"; return; }
+    if (!poMatches || !poMatches.length){
+      box.style.display = 'none';
+      return;
+    }
 
     const nameByCode = {};
-    previewRows.forEach(r => { if (r.article) nameByCode[String(r.article).toLowerCase()] = r.name || ""; });
+    for (const r of (previewRows||[])){
+      if (r?.article) nameByCode[String(r.article).toLowerCase()] = r.name || '';
+    }
 
-    tb.innerHTML = "";
-    let shown = 0;
+    tb.innerHTML = '';
 
-    for (const m of poMatches) {
+    let totalRows = 0;
+    let hiddenDone = 0;
+
+    for (const m of poMatches){
       const code = String(m.article || '');
       const nameFile = nameByCode[code.toLowerCase()] || '';
       const nameMs   = m.name_from_ms || '';
-      const qtyInPo  = (m.qty_in_po != null) ? m.qty_in_po : 0;
-      const orders   = Array.isArray(m.orders) ? m.orders : [];
+      const qtyInPo  = (m.qty_in_po ?? 0);
+      const rawOrders = Array.isArray(m.orders) ? m.orders : [];
 
-      const filtered = orders.filter(ord => $('showDone')?.checked || !isDoneState(ord.state));
-      if (!filtered.length) continue;
+      const normOrders = rawOrders.map(o => ({
+        number:  o.number || o.name || '',
+        href:    o.href || o.meta?.uuidHref || '',
+        moment:  o.moment || o.momentDate || '',
+        created: o.created || o.createdAt || o.created_at || '',
+        updated: o.updated || o.updatedAt || o.updated_at || '',
+        state:   o.state || o.stateName || o.state_name || ''
+      }));
 
-      for (const o of filtered) {
-        const num     = o.number || '';
-        const href    = o.href || '';
-        const stateObj = o.state || null;
-        const moment   = fmtDate(o.moment);
-        const created  = fmtDate(o.created);
-        const updated  = fmtDate(o.updated);
+      const visible = normOrders.filter(o => showDone || !isDoneState(o.state));
+      hiddenDone += normOrders.length - visible.length;
 
-        const numCell = href
-          ? '<a href="'+href+'" target="_blank">'+esc(num)+'</a> <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>'
-          : esc(num) + ' <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>';
+      if (visible.length === 0 && normOrders.length === 0){
+        const tr0 = document.createElement('tr');
+        tr0.innerHTML =
+          `<td class="mono">${esc(code)}</td>`+
+          `<td>${esc(nameFile)}</td>`+
+          `<td>${esc(nameMs)}</td>`+
+          `<td></td><td></td><td></td><td></td><td></td>`+
+          `<td>${qtyInPo}</td>`;
+        tb.appendChild(tr0);
+        continue;
+      }
 
-        const tr = document.createElement("tr");
+      if (visible.length === 0) continue;
+
+      for (const o of visible){
+        totalRows++;
+        const numCell = o.href
+          ? `<a href="${o.href}" target="_blank">${esc(o.number)}</a> <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>`
+          : `${esc(o.number)} <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>`;
+
+        const tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="mono">'+esc(code)+'</td>'+
-          '<td>'+esc(nameFile)+'</td>'+
-          '<td>'+esc(nameMs)+'</td>'+
-          '<td>'+numCell+'</td>'+
-          '<td>'+statusBadge(stateObj)+'</td>'+
-          '<td>'+esc(moment)+'</td>'+
-          '<td>'+esc(created)+'</td>'+
-          '<td>'+esc(updated)+'</td>'+
-          '<td>'+qtyInPo+'</td>';
+          `<td class="mono">${esc(code)}</td>`+
+          `<td>${esc(nameFile)}</td>`+
+          `<td>${esc(nameMs)}</td>`+
+          `<td>${numCell}</td>`+
+          `<td>${statusBadge(o.state)}</td>`+
+          `<td>${esc(fmtDate(o.moment))}</td>`+
+          `<td>${esc(fmtDate(o.created))}</td>`+
+          `<td>${esc(fmtDate(o.updated))}</td>`+
+          `<td>${qtyInPo}</td>`;
         tb.appendChild(tr);
-        shown++;
       }
     }
 
-    if (shown === 0) { box.style.display = "none"; return; }
+    sum.textContent =
+      `Найдено совпадений: ${poMatches.length}. `+
+      `Показано строк: ${totalRows}`+
+      (hiddenDone ? ` (без «Выполнен»: ${hiddenDone})` : '');
 
-    sum.textContent = 'Найдено совпадений: ' + poMatches.length +
-                      '. Показано строк: ' + shown + (showDone ? '' : ' (без «Выполнен»)');
-
-    box.style.display = "";
+    box.style.display = '';
   }
 
-  $('showDone')?.addEventListener('change', () => renderPoMatches(rowsCache, poMatchesCache));
+  if (showDoneEl){
+    showDoneEl.addEventListener('change', () => {
+      renderPoMatches(rowsCache, poMatchesCache);
+    });
+  }
 
-  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn));
-  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn));
+  previewBtn?.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn));
+  importBtn?.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn));
 })();
 </script>
 </body>
