@@ -20,6 +20,7 @@ MS_PASSWORD = os.environ.get("MS_PASSWORD")
 
 AMERICA_PRICE_TYPE_EXTCODE = "345befb9-8ffb-42ac-86ca-e24f76de1310"
 CIS_PRICE_TYPE_EXTCODE      = "cbcf493b-55bc-11d9-848a-00112f43529a"
+DONE_NAMES: Set[str] = {"выполнен", "выполнено", "выполнена", "исполнен", "completed", "done"}
 
 if not MS_LOGIN or not MS_PASSWORD:
     raise RuntimeError("Set MS_LOGIN and MS_PASSWORD environment variables.")
@@ -41,6 +42,14 @@ def _norm(s: Optional[str]) -> str:
 
 def _norm_low(s: Optional[str]) -> str:
     return _norm(s).casefold()
+
+def is_done_state(state: Optional[Dict[str, Any]]) -> bool:
+    """True, если заказ поставщику завершён."""
+    if not isinstance(state, dict):
+        return False
+    name  = (_norm(state.get("name")) or "").casefold()
+    stype = (_norm(state.get("stateType")) or "").casefold()
+    return (name in DONE_NAMES) or (stype == "successful")
 
 def normalize_assortment_meta(meta: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(meta, dict):
@@ -166,7 +175,7 @@ async def fetch_po_index_for_agent(
 ) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
 
-    params = {"limit": 100, "expand": "positions.assortment"}
+    params = {"limit": 100, "expand": "positions.assortment,state"}
     next_href = f"{MS_API}/entity/purchaseorder"
     until_ts = time.time() - days * 86400
 
@@ -184,11 +193,10 @@ async def fetch_po_index_for_agent(
             except Exception:
                 pass
 
-            state_name = (po.get("state", {}) or {}).get("name")
-            if isinstance(state_name, str) and state_name.strip().lower() in {
-                "Выполнен", "Выполнено", "Выполнена", "Completed", "Исполнен"
-            }:
-                continue
+                state_obj  = po.get("state") or {}
+                if is_done_state(state_obj):
+                    continue
+                state_name = state_obj.get("name")
 
             po_number = po.get("name") or po.get("description") or ""
             po_href = po.get("meta", {}).get("href", "")
