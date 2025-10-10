@@ -27,7 +27,7 @@
     .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
     .chip.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}
     .chip.no{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
-    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
   </style>
 </head>
 <body>
@@ -37,7 +37,7 @@
   <div class="card grid grid-3">
     <div><label>Организация</label><input id="org" type="text" placeholder="West-parts"></div>
     <div><label>Склад</label><input id="store" type="text" placeholder="Основной склад"></div>
-    <div><label>Поставщик (для сверки ЗП)</label><input id="agent" type="text" placeholder="Ebay / Тестовый"></div>
+    <div><label>Контрагент</label><input id="agent" type="text" placeholder="Ebay"></div>
   </div>
 
   <div class="card grid grid-3">
@@ -75,14 +75,14 @@
       <table id="mainTable">
         <thead>
           <tr>
-            <th>Артикул (станет code)</th>
+            <th>Артикул</th>
             <th>Наименование (файл)</th>
             <th>Кол-во</th>
             <th>Ед.</th>
             <th>Цена из файла</th>
             <th>Вес (кг)</th>
-            <th>Цена (KGS)</th>
-            <th>В ЗП</th>
+            <th>Розничная цена</th>
+            <th>В заказах поставщика</th>
             <th>Товар</th>
           </tr>
         </thead>
@@ -94,6 +94,9 @@
   <div class="card" id="poMatches" style="display:none">
     <h3>Совпадения с заказами поставщика</h3>
     <div id="poSummary" class="muted" style="margin:6px 0 10px"></div>
+    <label class="muted" style="display:block;margin:0 0 10px">
+      <input type="checkbox" id="showDone"> Показывать заказы со статусом «Выполнен»
+    </label>
     <div style="overflow:auto">
       <table id="poTable">
         <thead>
@@ -102,7 +105,8 @@
             <th>Наименование (файл)</th>
             <th>Наименование (МС)</th>
             <th>№ заказа (с датой создания)</th>
-            <th>Дата (moment)</th>
+            <th>Статус</th>
+            <th>Дата</th>
             <th>Создан</th>
             <th>Обновлён</th>
             <th>Кол-во в ЗП</th>
@@ -137,9 +141,21 @@
   let rowsCache = [];
   const weightsMap = {};
   const pricesMap  = {};
+  let poMatchesCache = [];
+
+  function isDoneState(s) {
+    if (!s) return false;
+    s = String(s).trim().toLowerCase();
+    return ["Выполнен","Выполнено","Выполнена","Completed","Исполнен"].includes(s);
+  }
+  function statusBadge(s) {
+    const t = (s || "").trim();
+    const cls = isDoneState(t) ? "no" : (t ? "ok" : "");
+    return t ? `<span class="chip ${cls}">${t}</span>` : "";
+  }
 
   function getCur() {
-    for (var i=0;i<curRadios.length;i++) if (curRadios[i].checked) return curRadios[i].value;
+    for (let i=0;i<curRadios.length;i++) if (curRadios[i].checked) return curRadios[i].value;
     return 'usd';
   }
 
@@ -233,15 +249,16 @@
 
     if (path.indexOf('preview') >= 0) {
       rowsCache = data.rows || [];
-      for (var k in weightsMap) if (Object.prototype.hasOwnProperty.call(weightsMap,k)) delete weightsMap[k];
-      for (var k2 in pricesMap) if (Object.prototype.hasOwnProperty.call(pricesMap,k2)) delete pricesMap[k2];
+      for (const k in weightsMap) delete weightsMap[k];
+      for (const k2 in pricesMap)  delete pricesMap[k2];
 
+      poMatchesCache = data.po_matches || [];
       renderMainTable(rowsCache);
-      renderPoMatches(rowsCache, data.po_matches || []);
+      renderPoMatches(rowsCache, poMatchesCache);
       $('results').style.display = '';
-      $('poMatches').style.display = (data.po_matches && data.po_matches.length) ? '' : 'none';
+      $('poMatches').style.display = (poMatchesCache.length) ? '' : 'none';
       $('summary').textContent = 'Строк: ' + data.rows_total + '. Создадим: ' + data.will_create_count +
-        '. Уже есть: ' + data.will_use_existing_count + '. Совпадений с заказами поставщика: ' + ((data.po_matches||[]).length) + '.';
+        '. Уже есть: ' + data.will_use_existing_count + '. Совпадений с заказами поставщика: ' + (poMatchesCache.length) + '.';
       statusEl.textContent = '';
     } else {
       statusEl.textContent = 'Готово. Документ Приёмки создан.';
@@ -251,26 +268,25 @@
   function renderMainTable(rows) {
     const tb = document.querySelector("#mainTable tbody");
     tb.innerHTML = "";
-    for (var idx=0; idx<rows.length; idx++) {
-      var r = rows[idx];
+    rows.forEach((r, idx) => {
       const priceText = (r.price_kgs != null) ? r.price_kgs : "";
       const tr = document.createElement("tr");
       tr.innerHTML =
         '<td class="mono">'+esc(r.article || "")+'</td>'+
-        '<td>'+esc(r.name)+'</td>'+
-        '<td>'+((r.qty !== undefined && r.qty !== null)? r.qty : '')+'</td>'+
+        '<td>'+esc(r.name || "")+'</td>'+
+        '<td>'+((r.qty ?? '') )+'</td>'+
         '<td>'+esc(r.unit || "")+'</td>'+
-        '<td>'+((r.price_raw !== undefined && r.price_raw !== null)? r.price_raw : '')+'</td>'+
+        '<td>'+((r.price_raw ?? '') )+'</td>'+
         '<td><input type="number" min="0" step="0.001" class="weightInput" data-row="'+idx+'" style="width:90px"/></td>'+
         '<td class="priceKgs" data-row="'+idx+'">'+(priceText === "" ? "" : priceText)+'</td>'+
         '<td>'+(r.po_hit ? '<span class="chip ok">есть</span>' : '<span class="chip no">нет</span>')+'</td>'+
         '<td>'+(r.will_create ? '<span class="chip no">создадим</span>' : '<span class="chip ok">существует</span>')+'</td>';
       tb.appendChild(tr);
-    }
+    });
   }
 
-  document.addEventListener('input', function(e){
-    if (!(e.target.classList && e.target.classList.contains('weightInput'))) return;
+  document.addEventListener('input', (e) => {
+    if (!e.target.classList?.contains('weightInput')) return;
     const idx = parseInt(e.target.dataset.row, 10);
     if (!rowsCache[idx]) return;
     const w = e.target.value;
@@ -287,9 +303,7 @@
   });
 
   function recalcAll() {
-    var inputs = document.querySelectorAll('.weightInput');
-    for (var i=0;i<inputs.length;i++){
-      var inp = inputs[i];
+    document.querySelectorAll('.weightInput').forEach(inp => {
       const idx = parseInt(inp.dataset.row, 10);
       const w = parseFloat(inp.value || '0') || 0;
       weightsMap[idx] = w;
@@ -299,90 +313,82 @@
         if (price == null) { cell.textContent = ''; delete pricesMap[idx]; }
         else { cell.textContent = price.toFixed(2); pricesMap[idx] = price; }
       }
-    }
+    });
   }
-  for (var i=0;i<curRadios.length;i++) curRadios[i].addEventListener('change', recalcAll);
-  ['usdRate','coef','ship'].forEach(function(id){ $(id).addEventListener('input', recalcAll); });
+  curRadios.forEach(r => r.addEventListener('change', recalcAll));
+  ['usdRate','coef','ship'].forEach(id => $(id).addEventListener('input', recalcAll));
 
   function fmtDate(d) {
     if (!d) return '';
-    var s = (String(d).indexOf('T') >= 0) ? d : (String(d).replace(' ', 'T') + 'Z');
-    var dt = new Date(s);
+    const s = (String(d).includes('T') ? String(d) : (String(d).replace(' ', 'T') + 'Z'));
+    const dt = new Date(s);
     return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString();
   }
 
   function renderPoMatches(previewRows, poMatches) {
-    var box = document.getElementById("poMatches");
-    var sum = document.getElementById("poSummary");
-    var tb  = document.querySelector("#poTable tbody");
+    const box = $('poMatches');
+    const sum = $('poSummary');
+    const tb  = document.querySelector("#poTable tbody");
+    const showDone = $('showDone')?.checked;
 
-    if (!poMatches || !poMatches.length) {
-      box.style.display = "none";
-      return;
-    }
+    if (!poMatches || !poMatches.length) { box.style.display = "none"; return; }
 
-    var nameByCode = {};
-    for (var i=0;i<previewRows.length;i++){
-      var r = previewRows[i];
-      if (r.article) nameByCode[String(r.article).toLowerCase()] = r.name || "";
-    }
+    const nameByCode = {};
+    previewRows.forEach(r => { if (r.article) nameByCode[String(r.article).toLowerCase()] = r.name || ""; });
 
     tb.innerHTML = "";
+    let shown = 0;
 
-    for (var mIdx=0; mIdx<poMatches.length; mIdx++) {
-      var m = poMatches[mIdx];
-      var code = String(m.article || '');
-      var nameFile = nameByCode[code.toLowerCase()] || '';
-      var nameMs   = m.name_from_ms || '';
-      var qtyInPo  = (m.qty_in_po !== undefined && m.qty_in_po !== null) ? m.qty_in_po : 0;
-      var orders   = Array.isArray(m.orders) ? m.orders : [];
+    for (const m of poMatches) {
+      const code = String(m.article || '');
+      const nameFile = nameByCode[code.toLowerCase()] || '';
+      const nameMs   = m.name_from_ms || '';
+      const qtyInPo  = (m.qty_in_po != null) ? m.qty_in_po : 0;
+      const orders   = Array.isArray(m.orders) ? m.orders : [];
 
-      if (!orders.length) {
-        var tr0 = document.createElement("tr");
-        tr0.innerHTML =
-          '<td class="mono">'+esc(code)+'</td>'+
-          '<td>'+esc(nameFile)+'</td>'+
-          '<td>'+esc(nameMs)+'</td>'+
-          '<td></td><td></td><td></td><td></td><td></td>'+
-          '<td>'+qtyInPo+'</td>';
-        tb.appendChild(tr0);
-        continue;
-      }
+      const filtered = orders.filter(o => showDone || !isDoneState(o.state));
+      if (!filtered.length) continue;
 
-      for (var j=0;j<orders.length;j++){
-        var o = orders[j];
-        var num     = o.number || '';
-        var href    = o.href || '';
-        var moment  = fmtDate(o.moment);
-        var created = fmtDate(o.created);
-        var updated = fmtDate(o.updated);
+      for (const o of filtered) {
+        const num     = o.number || '';
+        const href    = o.href || '';
+        const state   = o.state || '';
+        const moment  = fmtDate(o.moment);
+        const created = fmtDate(o.created);
+        const updated = fmtDate(o.updated);
 
-        var numCell = href
+        const numCell = href
           ? '<a href="'+href+'" target="_blank">'+esc(num)+'</a> <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>'
           : esc(num) + ' <span class="muted" style="white-space:nowrap">· '+esc(created)+'</span>';
 
-        var tr = document.createElement("tr");
+        const tr = document.createElement("tr");
         tr.innerHTML =
           '<td class="mono">'+esc(code)+'</td>'+
           '<td>'+esc(nameFile)+'</td>'+
           '<td>'+esc(nameMs)+'</td>'+
           '<td>'+numCell+'</td>'+
+          '<td>'+statusBadge(state)+'</td>'+
           '<td>'+esc(moment)+'</td>'+
           '<td>'+esc(created)+'</td>'+
           '<td>'+esc(updated)+'</td>'+
-          '<td>'+(href ? '<a href="'+href+'" target="_blank">открыть</a>' : '')+'</td>'+
           '<td>'+qtyInPo+'</td>';
         tb.appendChild(tr);
+        shown++;
       }
     }
 
-    sum.textContent = 'Найдено совпадений: ' + poMatches.length;
+    if (shown === 0) { box.style.display = "none"; return; }
+
+    sum.textContent = 'Найдено совпадений: ' + poMatches.length +
+                      '. Показано строк: ' + shown + (showDone ? '' : ' (без «Выполнен»)');
+
     box.style.display = "";
   }
 
-  if (previewBtn) previewBtn.addEventListener('click', function(){ callApi('/import-invoice-preview/', previewBtn); });
-  if (importBtn)  importBtn.addEventListener('click',  function(){ callApi('/import-invoice-to-supply/', importBtn); });
+  $('showDone')?.addEventListener('change', () => renderPoMatches(rowsCache, poMatchesCache));
 
+  if (previewBtn) previewBtn.addEventListener('click', () => callApi('/import-invoice-preview/', previewBtn));
+  if (importBtn)  importBtn.addEventListener('click',  () => callApi('/import-invoice-to-supply/', importBtn));
 })();
 </script>
 </body>

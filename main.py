@@ -166,7 +166,7 @@ async def fetch_po_index_for_agent(
 ) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
 
-    params = {"limit": 100, "expand": "positions.assortment"}  # ⬅️ без filter по агенту
+    params = {"limit": 100, "expand": "positions.assortment"}
     next_href = f"{MS_API}/entity/purchaseorder"
     until_ts = time.time() - days * 86400
 
@@ -184,8 +184,14 @@ async def fetch_po_index_for_agent(
             except Exception:
                 pass
 
+            state_name = (po.get("state", {}) or {}).get("name")
+            if isinstance(state_name, str) and state_name.strip().lower() in {
+                "Выполнен", "Выполнено", "Выполнена", "Completed", "Исполнен"
+            }:
+                continue
+
             po_number = po.get("name") or po.get("description") or ""
-            po_href   = po.get("meta", {}).get("href", "")
+            po_href = po.get("meta", {}).get("href", "")
 
             for p in (po.get("positions", {}).get("rows") or []):
                 a = p.get("assortment") or {}
@@ -193,19 +199,14 @@ async def fetch_po_index_for_agent(
                 if not code:
                     continue
                 key = _norm_low(code)
-                bucket = out.setdefault(
-                    key,
-                    {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0}
-                )
+                bucket = out.setdefault(key, {"name_from_ms": a.get("name") or "", "orders": [], "qty_in_po": 0})
                 bucket["qty_in_po"] += 1
                 if po_number or po_href:
                     if not any(o.get("number") == po_number and o.get("href") == po_href for o in bucket["orders"]):
                         bucket["orders"].append({
-                            "number":  po_number,
-                            "href":    po_href,
-                            "moment":  po.get("moment"),
-                            "created": po.get("created"),
-                            "updated": po.get("updated"),
+                            "number": po_number,
+                            "href": po_href,
+                            "state": state_name or ""
                         })
 
         next_href = data.get("meta", {}).get("nextHref")
