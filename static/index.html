@@ -370,10 +370,11 @@
         const tr0 = document.createElement('tr');
         tr0.innerHTML =
           `<td class="mono">${esc(code)}</td>`+
+          `<td>${esc(m.manufacturer || manuByCode[code.toLowerCase()] || '—')}</td>`+ 
           `<td>${esc(nameFile)}</td>`+
-          `<td>${esc(m.manufacturer || '—')}</td>`+
           `<td>${esc(nameMs)}</td>`+
-          `<td></td><td></td><td></td><td></td><td></td>`+
+          `<td></td>`+
+          `<td></td>`+
           `<td>${qtyInPo}</td>`;
         tb.appendChild(tr0);
         continue;
@@ -389,16 +390,12 @@
 
         const tr = document.createElement('tr');
         tr.innerHTML =
-          `<td class="mono">${esc(code)}</td>`+
-          `<td>${esc(nameFile)}</td>`+
-          `<td>${esc(m.manufacturer || '—')}</td>`+
-          `<td>${esc(nameMs)}</td>`+
-          `<td>${numCell}</td>`+
-          `<td>${statusBadge(o.state)}</td>`+
-          `<td>${esc(fmtDate(o.moment))}</td>`+
-          `<td>${esc(fmtDate(o.created))}</td>`+
-          `<td>${esc(fmtDate(o.updated))}</td>`+
-          `<td>${qtyInPo}</td>`;
+        `<td class="mono">${esc(code)}</td>`+
+        `<td>${esc(m.manufacturer || manuByCode[code.toLowerCase()] || '—')}</td>`+
+        `<td>${esc(nameFile)}</td>`+
+        `<td>${esc(nameMs)}</td>`+
+        `<td>${numCell}</td>`+
+        `<td>${statusBadge(o.state)}</td>`+ 
         tb.appendChild(tr);
       }
     }
