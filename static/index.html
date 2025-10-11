@@ -338,8 +338,12 @@
     }
 
     const nameByCode = {};
+    const manuByCode = {};
     for (const r of (previewRows||[])){
-      if (r?.article) nameByCode[String(r.article).toLowerCase()] = r.name || '';
+      const k = (r?.article ? String(r.article).toLowerCase() : '');
+      if (!k) continue;
+      nameByCode[k] = r.name || '';
+      manuByCode[k] = r.manufacturer || '';
     }
 
     tb.innerHTML = '';
@@ -348,10 +352,12 @@
     let hiddenDone = 0;
 
     for (const m of poMatches){
-      const code = String(m.article || '');
-      const nameFile = nameByCode[code.toLowerCase()] || '';
-      const nameMs   = m.name_from_ms || '';
-      const qtyInPo  = (m.qty_in_po ?? 0);
+      const code      = String(m.article || '');
+      const kLower    = code.toLowerCase();
+      const nameFile  = nameByCode[kLower] || '';
+      const manuf     = (m.manufacturer || manuByCode[kLower] || '—');
+      const nameMs    = m.name_from_ms || '';
+      const qtyInPo   = Number(m.qty_in_po ?? 0);
       const rawOrders = Array.isArray(m.orders) ? m.orders : [];
 
       const normOrders = rawOrders.map(o => ({
@@ -367,16 +373,16 @@
       hiddenDone += normOrders.length - visible.length;
 
       if (visible.length === 0 && normOrders.length === 0){
-        const tr0 = document.createElement('tr');
-        tr0.innerHTML =
+        const rowEl0 = document.createElement('tr');
+        rowEl0.innerHTML =
           `<td class="mono">${esc(code)}</td>`+
-          `<td>${esc(m.manufacturer || manuByCode[code.toLowerCase()] || '—')}</td>`+ 
+          `<td>${esc(manuf)}</td>`+
           `<td>${esc(nameFile)}</td>`+
           `<td>${esc(nameMs)}</td>`+
           `<td></td>`+
           `<td></td>`+
           `<td>${qtyInPo}</td>`;
-        tb.appendChild(tr0);
+        tb.appendChild(rowEl0);
         continue;
       }
 
@@ -385,18 +391,21 @@
       for (const o of visible){
         totalRows++;
         const numCell = o.href
-          ? `<a href="${o.href}" target="_blank">${esc(o.number)}</a> <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>`
-          : `${esc(o.number)} <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>`;
+          ? `<a href="${o.href}" target="_blank">${esc(o.number)}</a>` +
+            (o.created ? ` <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>` : '')
+          : `${esc(o.number)}` +
+            (o.created ? ` <span class="muted" style="white-space:nowrap">· ${esc(fmtDate(o.created))}</span>` : '');
 
-        const tr = document.createElement('tr');
-        tr.innerHTML =
-        `<td class="mono">${esc(code)}</td>`+
-        `<td>${esc(m.manufacturer || manuByCode[code.toLowerCase()] || '—')}</td>`+
-        `<td>${esc(nameFile)}</td>`+
-        `<td>${esc(nameMs)}</td>`+
-        `<td>${numCell}</td>`+
-        `<td>${statusBadge(o.state)}</td>`+ 
-        tb.appendChild(tr);
+        const rowEl = document.createElement('tr');
+        rowEl.innerHTML =
+          `<td class="mono">${esc(code)}</td>`+
+          `<td>${esc(manuf)}</td>`+
+          `<td>${esc(nameFile)}</td>`+
+          `<td>${esc(nameMs)}</td>`+
+          `<td>${numCell}</td>`+
+          `<td>${statusBadge(o.state)}</td>`+
+          `<td>${qtyInPo}</td>`;
+        tb.appendChild(rowEl);
       }
     }
 
