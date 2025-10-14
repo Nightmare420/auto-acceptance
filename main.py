@@ -356,6 +356,90 @@ async def update_product_prices(
 
     await _request_with_backoff(client, "PUT", f"{MS_API}/entity/product/{product_id}", json=payload)
 
+async def update_existing_product_prices_if_needed(
+    client: httpx.AsyncClient,
+    product_id: str,
+    sale_kgs: Optional[float],
+    kgs_currency_meta: Dict[str, Any],
+    america_price_type_meta: Dict[str, Any],
+    cis_price_type_meta: Dict[str, Any],
+) -> None:
+    """
+    Обновляет цены у СУЩЕСТВУЮЩЕГО товара по правилам:
+    - 'Цена продажи Америка' — обновляем ТОЛЬКО если вес товара пустой/отсутствует/==0.
+    - 'Цена продажи СНГ'     — обновляем, если цены нет или она равна 0.
+    Остальные цены/поля не трогаем.
+    """
+    if sale_kgs is None:
+        return
+
+    r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product/{product_id}")
+    prod = r.json()
+
+    weight = prod.get("weight")
+    try:
+        weight_val = float(weight) if weight is not None else 0.0
+    except Exception:
+        weight_val = 0.0
+
+    sale_prices = list(prod.get("salePrices") or [])
+    href_america = america_price_type_meta["meta"]["href"]
+    href_cis     = cis_price_type_meta["meta"]["href"]
+
+    def _find_idx_by_href(href: str) -> int:
+        return next((i for i, sp in enumerate(sale_prices)
+                     if sp.get("priceType", {}).get("meta", {}).get("href") == href), -1)
+
+    def _value_of(sp: Dict[str, Any]) -> int:
+        try:
+            return int(sp.get("value") or 0)
+        except Exception:
+            return 0
+
+    idx_america = _find_idx_by_href(href_america)
+    idx_cis     = _find_idx_by_href(href_cis)
+
+    changed = False
+
+    if weight_val == 0.0:
+        new_sp_am = {
+            "value": int(round(float(sale_kgs) * 100)),
+            "currency": kgs_currency_meta["meta"],
+            "priceType": america_price_type_meta["meta"],
+        }
+        if idx_america >= 0:
+            if sale_prices[idx_america] != new_sp_am:
+                sale_prices[idx_america] = new_sp_am
+                changed = True
+        else:
+            sale_prices.append(new_sp_am)
+            changed = True
+
+    if idx_cis >= 0:
+        if _value_of(sale_prices[idx_cis]) == 0:
+            new_sp_cis = {
+                "value": int(round(float(sale_kgs) * 100)),
+                "currency": kgs_currency_meta["meta"],
+                "priceType": cis_price_type_meta["meta"],
+            }
+            if sale_prices[idx_cis] != new_sp_cis:
+                sale_prices[idx_cis] = new_sp_cis
+                changed = True
+    else:
+        new_sp_cis = {
+            "value": int(round(float(sale_kgs) * 100)),
+            "currency": kgs_currency_meta["meta"],
+            "priceType": cis_price_type_meta["meta"],
+        }
+        sale_prices.append(new_sp_cis)
+        changed = True
+
+    if changed:
+        await _request_with_backoff(
+            client, "PUT", f"{MS_API}/entity/product/{product_id}",
+            json={"salePrices": sale_prices}
+        )
+
 async def get_uom_sht_meta(client: httpx.AsyncClient) -> Dict[str, Any]:
     for f in ("code=796", "name=шт"):
         r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/uom", params={"filter": f, "limit": 1})
@@ -641,10 +725,14 @@ async def import_invoice_to_supply(
 
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
-            else:
-                if not auto_create_products:
-                    not_found.append(article)
-                    continue
+                await update_existing_product_prices_if_needed(
+                    client=client,
+                    product_id=product_id,
+                    sale_kgs=sale_kgs,
+                    kgs_currency_meta=kgs_meta,
+                    america_price_type_meta=america_pt,
+                    cis_price_type_meta=cis_pt,
+                )
 
                 payload_product: Dict[str, Any] = {
                     "name": name_row,
