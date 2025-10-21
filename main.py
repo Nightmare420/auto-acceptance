@@ -723,6 +723,11 @@ async def import_invoice_to_supply(
             cost_kgs = calc_cost_kgs(price_raw, price_currency, usd_rate) or 0.0
             target_pt = america_pt if (price_currency or "").lower() == "usd" else cis_pt
 
+            # DEBUG
+            print(f"[ROW] code={article!r} name={name_row!r} qty={qty} "
+                f"found={'YES' if found else 'NO'} weight={weight} "
+                f"sale_kgs={sale_kgs} cost_kgs={cost_kgs}")
+
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 await update_existing_product_prices_if_needed(
@@ -755,6 +760,8 @@ async def import_invoice_to_supply(
                         "meta": producer_attr["meta"],
                         "value": manufacturer
                     }]
+
+                print(f"[CREATE PRODUCT] code={article} name={name_row} PT={'AMERICA' if target_pt==america_pt else 'CIS'}")
 
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
                 data_c = None
@@ -792,6 +799,7 @@ async def import_invoice_to_supply(
                             elif data_c.get("message"):
                                 msg = data_c["message"]
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
+                    print(f"[CREATE RESP] status={r_c.status_code} body={data_c}")
 
             q = float(qty or 0)
             if not np.isfinite(q) or q <= 0:
@@ -875,6 +883,7 @@ async def import_invoice_to_supply(
             if not msg:
                 msg = r_pos.text
             raise HTTPException(status_code=r_pos.status_code, detail=f"МС отклонил позиции: {msg}")
+        print(f"[POS RESP] status={r_pos.status_code} text={r_pos.text[:500]}")
 
     return SupplyCreateResponse(
         created_positions=len(positions),
