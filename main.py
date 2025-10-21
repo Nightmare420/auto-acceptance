@@ -44,7 +44,6 @@ def _norm_low(s: Optional[str]) -> str:
     return _norm(s).casefold()
 
 def is_done_state(state: Optional[Dict[str, Any]]) -> bool:
-    """True, если заказ поставщику завершён."""
     if not isinstance(state, dict):
         return False
     name  = (_norm(state.get("name")) or "").casefold()
@@ -162,13 +161,36 @@ def read_invoice_excel(file, filename: str) -> pd.DataFrame:
 async def prefetch_products_by_code(client: httpx.AsyncClient, codes: Set[str]) -> Dict[str, Dict[str,Any]]:
     out: Dict[str, Dict[str,Any]] = {}
     for code in {c for c in (c.strip() for c in codes) if c}:
-        url = f"{MS_API}/entity/product"
-        r = await _request_with_backoff(client, "GET", url, params={"filter": f"code={code}", "limit": 1})
+        r = await _request_with_backoff(client, "GET", f"{MS_API}/entity/product", params={"filter": f"code={code}", "limit": 1})
         rows = r.json().get("rows", [])
         if rows:
-            out[_norm_low(code)] = {"meta": rows[0]["meta"], "id": rows[0]["id"]}
+            out[_norm_low(code)] = {"meta": rows[0]["meta"], "id": rows[0]["id"], "type": "product", "archived": bool(rows[0].get("archived"))}
+        else:
+            found = await find_assortment_by_code(client, code)
+            if found:
+                out[_norm_low(code)] = {"meta": found["meta"], "id": found["id"], "type": found["type"], "archived": found.get("archived", False)}
         await asyncio.sleep(0.05)
     return out
+
+async def find_assortment_by_code(client: httpx.AsyncClient, code: str) -> Optional[Dict[str, Any]]:
+    if not code:
+        return None
+    r = await _request_with_backoff(
+        client, "GET", f"{MS_API}/entity/assortment",
+        params={"filter": f"code={code}", "limit": 1}
+    )
+    rows = r.json().get("rows", [])
+    if not rows:
+        return None
+    row = rows[0]
+    meta = row.get("meta") or {}
+    return {
+        "type": meta.get("type"),
+        "meta": meta,
+        "id": row.get("id"),
+        "archived": bool(row.get("archived")),
+        "name": row.get("name") or "",
+    }
 
 async def fetch_po_index_for_agent(
     client: httpx.AsyncClient, agent_name: Optional[str], days: int = 90
@@ -192,7 +214,6 @@ async def fetch_po_index_for_agent(
         data = r.json()
 
         for po in data.get("rows", []):
-            
             try:
                 ts = time.mktime(time.strptime((po.get("updated", "") or "")[:19], "%Y-%m-%d %H:%M:%S"))
                 if ts < until_ts:
@@ -200,7 +221,6 @@ async def fetch_po_index_for_agent(
             except Exception:
                 pass
 
-            
             state_name = ""
             state_obj = po.get("state") or {}
             if isinstance(state_obj, dict):
@@ -208,7 +228,6 @@ async def fetch_po_index_for_agent(
             if state_name.casefold() in completed_states:
                 continue
 
-            
             po_number  = po.get("name") or po.get("description") or ""
             po_href    = (po.get("meta") or {}).get("href", "")
             po_created = po.get("created") or ""
@@ -364,12 +383,6 @@ async def update_existing_product_prices_if_needed(
     america_price_type_meta: Dict[str, Any],
     cis_price_type_meta: Dict[str, Any],
 ) -> None:
-    """
-    Обновляет цены у СУЩЕСТВУЮЩЕГО товара по правилам:
-    - 'Цена продажи Америка' — обновляем ТОЛЬКО если вес товара пустой/отсутствует/==0.
-    - 'Цена продажи СНГ'     — обновляем, если цены нет или она равна 0.
-    Остальные цены/поля не трогаем.
-    """
     if sale_kgs is None:
         return
 
@@ -470,8 +483,9 @@ async def ensure_product_uom_and_weight(client: httpx.AsyncClient, product_id: s
 
 app = FastAPI()
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    CORSMiddleware(
+        allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+    )
 )
 
 BASE_DIR = Path(__file__).parent.resolve()
@@ -723,10 +737,9 @@ async def import_invoice_to_supply(
             cost_kgs = calc_cost_kgs(price_raw, price_currency, usd_rate) or 0.0
             target_pt = america_pt if (price_currency or "").lower() == "usd" else cis_pt
 
-            # DEBUG
             print(f"[ROW] code={article!r} name={name_row!r} qty={qty} "
-                f"found={'YES' if found else 'NO'} weight={weight} "
-                f"sale_kgs={sale_kgs} cost_kgs={cost_kgs}")
+                  f"found={'YES' if found else 'NO'} weight={weight} "
+                  f"sale_kgs={sale_kgs} cost_kgs={cost_kgs}")
 
             if found:
                 will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
@@ -738,6 +751,10 @@ async def import_invoice_to_supply(
                     america_price_type_meta=america_pt,
                     cis_price_type_meta=cis_pt,
                 )
+            else:
+                if not auto_create_products:
+                    not_found.append(article)
+                    continue
 
                 payload_product: Dict[str, Any] = {
                     "name": name_row,
@@ -747,10 +764,10 @@ async def import_invoice_to_supply(
                         "currency": kgs_meta,
                     },
                     "salePrices": [{
-                    "value": int(round(sale_kgs * 100)),
-                    "currency": kgs_meta,
-                    "priceType": target_pt,
-                }],
+                        "value": int(round(sale_kgs * 100)),
+                        "currency": kgs_meta,
+                        "priceType": target_pt,
+                    }],
                 }
                 if np.isfinite(weight) and weight >= 0:
                     payload_product["weight"] = float(weight)
@@ -764,11 +781,11 @@ async def import_invoice_to_supply(
                 print(f"[CREATE PRODUCT] code={article} name={name_row} PT={'AMERICA' if target_pt==america_pt else 'CIS'}")
 
                 r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
-                data_c = None
                 try:
                     data_c = r_c.json()
                 except Exception:
                     data_c = None
+                print(f"[CREATE RESP] status={r_c.status_code} body={data_c}")
 
                 if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
                     meta = data_c["meta"]
@@ -799,7 +816,6 @@ async def import_invoice_to_supply(
                             elif data_c.get("message"):
                                 msg = data_c["message"]
                         raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
-                    print(f"[CREATE RESP] status={r_c.status_code} body={data_c}")
 
             q = float(qty or 0)
             if not np.isfinite(q) or q <= 0:
