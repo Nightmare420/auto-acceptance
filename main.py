@@ -483,9 +483,11 @@ async def ensure_product_uom_and_weight(client: httpx.AsyncClient, product_id: s
 
 app = FastAPI()
 app.add_middleware(
-    CORSMiddleware(
-        allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
-    )
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 BASE_DIR = Path(__file__).parent.resolve()
