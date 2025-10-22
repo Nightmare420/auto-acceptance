@@ -755,67 +755,81 @@ async def import_invoice_to_supply(
                 if not auto_create_products:
                     not_found.append(article)
                     continue
-
-                payload_product: Dict[str, Any] = {
-                    "name": name_row,
-                    "code": article,
-                    "buyPrice": {
-                        "value": int(round(cost_kgs * 100)),
-                        "currency": kgs_meta,
-                    },
-                    "salePrices": [{
-                        "value": int(round(sale_kgs * 100)),
-                        "currency": kgs_meta,
-                        "priceType": target_pt,
-                    }],
-                }
-                if np.isfinite(weight) and weight >= 0:
-                    payload_product["weight"] = float(weight)
-                payload_product["uom"] = await get_uom_sht_meta(client)
-                if producer_attr and manufacturer:
-                    payload_product["attributes"] = [{
-                        "meta": producer_attr["meta"],
-                        "value": manufacturer
-                    }]
-
-                print(f"[CREATE PRODUCT] code={article} name={name_row} PT={'AMERICA' if target_pt==america_pt else 'CIS'}")
-
-                r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
-                try:
-                    data_c = r_c.json()
-                except Exception:
-                    data_c = None
-                print(f"[CREATE RESP] status={r_c.status_code} body={data_c}")
-
-                if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
-                    meta = data_c["meta"]
-                    product_id = data_c.get("id")
-                    created_products.append(article)
-                    will_create.append({"article": article, "name": name_row})
+                existing_any = await find_assortment_by_code(client, article)
+                if existing_any:
+                    meta = existing_any["meta"]
+                    product_id = existing_any.get("id")
+                    will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
                 else:
-                    r_find = await _request_with_backoff(
-                        client, "GET", f"{MS_API}/entity/product",
-                        params={"filter": f"code={article}", "limit": 1}
-                    )
-                    rows_find = r_find.json().get("rows", [])
-                    if rows_find:
-                        meta = rows_find[0]["meta"]
-                        product_id = rows_find[0]["id"]
-                        will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                    payload_product: Dict[str, Any] = {
+                        "name": name_row,
+                        "code": article,
+                        "buyPrice": {"value": int(round(cost_kgs * 100)), "currency": kgs_meta},
+                        "salePrices": [{
+                            "value": int(round(sale_kgs * 100)),
+                            "currency": kgs_meta,
+                            "priceType": target_pt,
+                        }],
+                    }
+                    if np.isfinite(weight) and weight >= 0:
+                        payload_product["weight"] = float(weight)
+                    payload_product["uom"] = await get_uom_sht_meta(client)
+                    if producer_attr and manufacturer:
+                        payload_product["attributes"] = [{"meta": producer_attr["meta"], "value": manufacturer}]
+
+                    print(f"[CREATE PRODUCT] code={article} name={name_row} PT={'AMERICA' if target_pt==america_pt else 'CIS'}")
+                    r_c = await _request_with_backoff(client, "POST", f"{MS_API}/entity/product", json=payload_product)
+                    try:
+                        data_c = r_c.json()
+                    except Exception:
+                        data_c = None
+                    print(f"[CREATE RESP] status={r_c.status_code} body={data_c}")
+
+                    if 200 <= r_c.status_code < 300 and isinstance(data_c, dict) and "meta" in data_c:
+                        meta = data_c["meta"]
+                        product_id = data_c.get("id")
+                        created_products.append(article)
+                        will_create.append({"article": article, "name": name_row})
                     else:
-                        msg = "неизвестная ошибка"
+                        conflict = False
                         if isinstance(data_c, dict):
-                            if data_c.get("errors"):
-                                parts = []
-                                for e in data_c["errors"]:
-                                    t = e.get("error") or e.get("message") or "Ошибка"
-                                    if e.get("code"):
-                                        t += f" (code {e['code']})"
-                                    parts.append(t)
-                                msg = "; ".join(parts)
-                            elif data_c.get("message"):
-                                msg = data_c["message"]
-                        raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
+                            for e in (data_c.get("errors") or []):
+                                if e.get("code") == 3006:
+                                    conflict = True
+                                    break
+                        if conflict:
+                            ex2 = await find_assortment_by_code(client, article)
+                            if ex2:
+                                meta = ex2["meta"]
+                                product_id = ex2.get("id")
+                                will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                            else:
+                                raise HTTPException(409, f"Код {article!r} уже занят, но объект не найден через ассортимент.")
+                        else:
+                            r_find = await _request_with_backoff(
+                                client, "GET", f"{MS_API}/entity/product",
+                                params={"filter": f"code={article}", "limit": 1}
+                            )
+                            rows_find = r_find.json().get("rows", [])
+                            if rows_find:
+                                meta = rows_find[0]["meta"]
+                                product_id = rows_find[0]["id"]
+                                will_use_existing.append({"article": article, "name": name_row, "product_id": product_id})
+                            else:
+                                msg = "неизвестная ошибка"
+                                if isinstance(data_c, dict):
+                                    if data_c.get("errors"):
+                                        parts = []
+                                        for e in data_c["errors"]:
+                                            t = e.get("error") or e.get("message") or "Ошибка"
+                                            if e.get("code"):
+                                                t += f" (code {e['code']})"
+                                            parts.append(t)
+                                        msg = "; ".join(parts)
+                                    elif data_c.get("message"):
+                                        msg = data_c["message"]
+                                raise HTTPException(400, f"Не удалось создать товар {article}: {msg}")
+
 
             q = float(qty or 0)
             if not np.isfinite(q) or q <= 0:
